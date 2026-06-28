@@ -1,0 +1,21 @@
+{
+  "name": "blockworld-local",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc && vite build",
+    "test:weather": "node scripts/run-weather-tests.mjs",
+    "preview": "vite preview --host 127.0.0.1",
+    "extract:faithful": "powershell -ExecutionPolicy Bypass -File scripts/extract-faithful.ps1"
+  },
+  "dependencies": {
+    "three": "^0.165.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.165.0",
+    "typescript": "^5.5.4",
+    "vite": "^8.0.16"
+  }
+}

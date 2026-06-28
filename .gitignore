@@ -1,0 +1,12 @@
+node_modules/
+dist/
+vite-dev.log
+vite-dev.err.log
+.DS_Store
+
+# User-provided local texture packs. Keep the folder, not the assets.
+public/resourcepack/*
+!public/resourcepack/.gitkeep
+public/resourcepacks/*
+public/soundpacks/*
+public/shaderpacks/*

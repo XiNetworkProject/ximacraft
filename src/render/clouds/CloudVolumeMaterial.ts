@@ -1,0 +1,52 @@
+import * as THREE from "three";
+import { cloudVolumeFragmentShader, cloudVolumeVertexShader } from "./CloudRaymarchShader";
+
+export function createCloudVolumeMaterial(
+  densityAtlas: THREE.Texture,
+  baseNoise3D: THREE.Data3DTexture,
+  detailNoise3D: THREE.Data3DTexture,
+): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    glslVersion: THREE.GLSL3,
+    transparent: true,
+    depthWrite: false,
+    depthTest: false,
+    side: THREE.BackSide,
+    blending: THREE.NormalBlending,
+    toneMapped: false,
+    uniforms: {
+      uDensityAtlas: { value: densityAtlas },
+      uBaseNoise3D: { value: baseNoise3D },
+      uDetailNoise3D: { value: detailNoise3D },
+      uSceneDepth: { value: null },
+      uCameraLocal: { value: new THREE.Vector3() },
+      uSunDirection: { value: new THREE.Vector3(0.4, 0.8, -0.2).normalize() },
+      uAnvilDirection: { value: new THREE.Vector2(1, 0) },
+      uLowResolution: { value: new THREE.Vector2(1, 1) },
+      uInvProjection: { value: new THREE.Matrix4() },
+      uCameraWorld: { value: new THREE.Matrix4() },
+      uWorldToLocal: { value: new THREE.Matrix4() },
+      uProfile: { value: 0 },
+      uOrganization: { value: 0 },
+      uDevelopment: { value: 0 },
+      uEventIntensity: { value: 0 },
+      uOpacity: { value: 1 },
+      uPrecipitation: { value: 0 },
+      uDayFactor: { value: 1 },
+      uStepCount: { value: 36 },
+      uJitter: { value: 0.5 },
+      uSeed: { value: 0 },
+      uTime: { value: 0 },
+      uUpdrafts: { value: Array.from({ length: 5 }, () => new THREE.Vector4()) },
+      uAnvilGrowth: { value: 0 },
+      uDryAirErosion: { value: 0 },
+      uPrecipitationOffset: { value: new THREE.Vector2() },
+      uDebugDensity: { value: 0 },
+      uLightningFlashes: { value: Array.from({ length: 4 }, () => new THREE.Vector4()) },
+      uLightningRadii: { value: new Float32Array(4) },
+      uVolumeHalfSize: { value: new THREE.Vector3(1, 1, 1) },
+    },
+    vertexShader: cloudVolumeVertexShader,
+    fragmentShader: cloudVolumeFragmentShader,
+  });
+}
