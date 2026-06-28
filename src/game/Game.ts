@@ -49,6 +49,10 @@ import { WeatherEventType, CELL_SIZE } from "../weather/WeatherTypes";
 import { WeatherEventPhase } from "../weather/events/WeatherEventPhase";
 import { WindVisualSystem } from "../render/weather/WindVisualSystem";
 import { LocalWeatherFieldTexture } from "../render/weather/LocalWeatherFieldTexture";
+import { SeasonSystem } from "../living/SeasonSystem";
+import { LivingWorldSystem } from "../living/LivingWorldSystem";
+import { AmbientBiomeAudioSystem } from "../living/AmbientBiomeAudioSystem";
+import { WorldMemorySystem } from "../living/WorldMemorySystem";
 import { WeatherMapUI } from "../ui/weather/WeatherMapUI";
 import { DebugOverlay } from "../ui/DebugOverlay";
 import { HotbarUI } from "../ui/HotbarUI";
@@ -105,6 +109,7 @@ export class Game {
   });
   private readonly forecastSystem = new ForecastSystem(this.weatherEngine);
   private readonly weatherDirector = new WeatherDirector(this.weatherEngine);
+  private readonly seasonSystem = new SeasonSystem();
   private readonly alertSystem = new WeatherAlertSystem();
   private readonly weatherMapData = new WeatherMapDataBuilder(this.weatherEngine, this.forecastSystem);
   private readonly weatherRenderer: WeatherRenderer;
@@ -115,6 +120,9 @@ export class Game {
   // Oscillation légère des herbes, fleurs et feuillages.
   private readonly vegetationWind = new VegetationWind();
   private readonly ambientLife: AmbientLifeSystem;
+  private readonly livingWorld: LivingWorldSystem;
+  private readonly biomeAmbience = new AmbientBiomeAudioSystem();
+  private readonly worldMemory = new WorldMemorySystem();
   // Perspective aérienne (profondeur atmosphérique).
   private readonly aerialPerspective = new AerialPerspective();
   private readonly aerialSunColor = new THREE.Color(0xffe9c8);
@@ -197,6 +205,7 @@ export class Game {
     // CloudMassRenderer (billboards tour + enclume), cohérent avec le style voxel.
     this.windVisuals = new WindVisualSystem(this.renderer.scene);
     this.ambientLife = new AmbientLifeSystem(this.renderer.scene);
+    this.livingWorld = new LivingWorldSystem(this.renderer.scene);
     this.lightningRenderer = new LightningRenderer(this.renderer.scene);
     this.lightning.onThunder = (delay, power) => this.weatherAudio.playThunder(delay, power);
     this.cloudVolumeRenderer = new CloudVolumeRenderer(this.renderer.scene, this.convectiveClouds);
@@ -262,6 +271,7 @@ export class Game {
     this.renderer.renderer.domElement.addEventListener("click", () => {
       void this.gameAudio.unlock();
       void this.weatherAudio.unlock();
+      void this.biomeAmbience.unlock();
       if (this.started && !this.isUiBlocking()) {
         this.input.requestPointerLock();
       }
@@ -351,6 +361,7 @@ export class Game {
     this.stormCloudMasses.clear();
     this.currentSeed = seed;
     this.world = new World(seed, this.blockRegistry, saveData?.blockChanges);
+    this.livingWorld.setSeed(seed);
     this.worldSnow = new WorldSnowSystem(this.weatherEngine, this.world);
     this.worldSnow.restore(saveData?.regionalSnow);
     this.world.ensureChunk(0, 0);
@@ -359,6 +370,7 @@ export class Game {
     this.chunks.unloadDistance = Settings.renderDistance + 4;
     this.configureChunkBudgets();
     this.entities = new EntityManager(this.renderer.scene, this.blockRegistry);
+    this.livingWorld.clear();
     this.groundRenderer.setSnowEnabled(false);
     this.weather.setRegionalMode(true);
     this.weatherDirector.reset();
@@ -432,6 +444,7 @@ export class Game {
       document.documentElement.dataset.weatherDebug = JSON.stringify(this.weatherDirector.debugState());
       document.documentElement.dataset.cloudPopulationVisual = String(this.skyCloudPopulation.visibleCount);
       document.documentElement.dataset.precipitationVisual = JSON.stringify(this.precipitation.debugState);
+      document.documentElement.dataset.livingWorld = JSON.stringify(this.livingWorld.debug());
     }
     const weatherScene = this.weatherDirector.scenarios.currentScene;
     this.worldSnow?.update(weatherDelta, weatherScene);
@@ -487,6 +500,7 @@ export class Game {
     const sample = this.sky.weatherSample!;
     const events = this.weatherEngine.getActiveEvents();
     const camera = this.renderer.camera.position;
+    const season = this.seasonSystem.sample(this.time.ticks);
     // Ombres de nuages au sol : couverture régionale + masses convectives.
     this.cloudShadows.update(delta, {
       sunDirection: this.sky.sunDirection,
@@ -501,6 +515,8 @@ export class Game {
     this.waterWaves.update(delta, sample.windX, sample.windZ);
     this.vegetationWind.update(delta, sample.windX, sample.windZ);
     this.ambientLife.update(delta, sample, camera, world, dayFactor, this.player.position, this.player.velocity);
+    this.livingWorld.update(delta, world, this.player.position, sample, this.time.ticks, season, this.qualityPreset);
+    this.worldMemory.update(delta, world, this.surfaceState, this.player.position, sample);
     // Perspective aérienne : teinte le lointain vers la couleur de l'atmosphère
     // (= couleur du brouillard/horizon du ciel), chaude vers le soleil.
     const aerialFog = this.renderer.scene.fog as THREE.Fog | null;
@@ -576,6 +592,7 @@ export class Game {
       },
       delta,
     );
+    this.biomeAmbience.update(world, this.player.position, sample, this.time.ticks, season, delta);
     this.updateTargetBlock();
 
     if (controlsEnabled) {
@@ -733,6 +750,10 @@ export class Game {
     if (blockId === BlockId.DARK_OAK_LOG) {
       if (Math.abs(normal.x) > 0.5) return BlockId.DARK_OAK_LOG_X;
       if (Math.abs(normal.z) > 0.5) return BlockId.DARK_OAK_LOG_Z;
+    }
+    if (blockId === BlockId.WEATHERED_BEAM) {
+      if (Math.abs(normal.x) > 0.5) return BlockId.WEATHERED_BEAM_X;
+      if (Math.abs(normal.z) > 0.5) return BlockId.WEATHERED_BEAM_Z;
     }
     return blockId;
   }
@@ -1089,6 +1110,10 @@ export class Game {
         this.regionalClouds.reset();
         this.stormCloudMasses.clear();
       },
+      livingWorld: this.livingWorld,
+      seasonSystem: this.seasonSystem,
+      ambientBiomeAudio: this.biomeAmbience,
+      worldMemory: this.worldMemory,
     });
   }
 
@@ -1189,6 +1214,7 @@ export class Game {
   private disposeWorld(): void {
     this.worldSnow?.dispose();
     this.worldSnow = null;
+    this.livingWorld.clear();
     this.chunks?.dispose();
     this.entities?.dispose();
     this.chunks = null;

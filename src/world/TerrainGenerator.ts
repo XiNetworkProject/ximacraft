@@ -3,10 +3,11 @@ import { clamp, hashString } from "../utils/MathUtils";
 import { Noise } from "../utils/Noise";
 import { BlockId } from "./BlockTypes";
 import { Chunk } from "./Chunk";
-import { BiomeGenerator } from "./BiomeGenerator";
+import { BiomeGenerator, BiomeId } from "./BiomeGenerator";
 import { CaveGenerator } from "./CaveGenerator";
 import { OreGenerator } from "./OreGenerator";
 import { StructureGenerator } from "./StructureGenerator";
+import { LivingWorldGenerator } from "./LivingWorldGenerator";
 
 export class TerrainGenerator {
   readonly noise: Noise;
@@ -14,6 +15,7 @@ export class TerrainGenerator {
   readonly caves: CaveGenerator;
   readonly ores: OreGenerator;
   readonly structures: StructureGenerator;
+  readonly living: LivingWorldGenerator;
 
   constructor(readonly seed: string) {
     this.noise = new Noise(hashString(seed));
@@ -21,6 +23,7 @@ export class TerrainGenerator {
     this.caves = new CaveGenerator(this.noise);
     this.ores = new OreGenerator(this.noise);
     this.structures = new StructureGenerator(this.noise);
+    this.living = new LivingWorldGenerator(this.noise);
   }
 
   getHeight(x: number, z: number): number {
@@ -52,12 +55,18 @@ export class TerrainGenerator {
   }
 
   generateChunk(chunk: Chunk): void {
+    const heights = new Int16Array(CHUNK_SIZE * CHUNK_SIZE);
+    const biomes = new Array<BiomeId>(CHUNK_SIZE * CHUNK_SIZE);
+
     for (let lz = 0; lz < CHUNK_SIZE; lz += 1) {
       for (let lx = 0; lx < CHUNK_SIZE; lx += 1) {
         const x = chunk.cx * CHUNK_SIZE + lx;
         const z = chunk.cz * CHUNK_SIZE + lz;
         const height = this.getHeight(x, z);
         const biome = this.biomes.sample(x, z, height);
+        const index = lz * CHUNK_SIZE + lx;
+        heights[index] = height;
+        biomes[index] = biome.id;
 
         for (let y = 0; y < WORLD_HEIGHT; y += 1) {
           let block = BlockId.AIR;
@@ -80,17 +89,33 @@ export class TerrainGenerator {
 
           chunk.setLocal(lx, y, lz, block);
         }
+      }
+    }
+
+    for (let lz = 0; lz < CHUNK_SIZE; lz += 1) {
+      for (let lx = 0; lx < CHUNK_SIZE; lx += 1) {
+        const index = lz * CHUNK_SIZE + lx;
+        const x = chunk.cx * CHUNK_SIZE + lx;
+        const z = chunk.cz * CHUNK_SIZE + lz;
+        const height = heights[index];
+        const biomeId = biomes[index];
+        const poi = height > SEA_LEVEL + 2 ? this.living.poiAt(x, z, biomeId, height) : null;
+        if (poi) {
+          this.living.placePoi(chunk, lx, height, lz, poi);
+          continue;
+        }
 
         const treePlaced =
           height > SEA_LEVEL + 2 &&
-          (biome.id === "forest" || biome.id === "plains" || biome.id === "hills" || biome.id === "snow") &&
-          this.structures.shouldPlaceTree(x, z, biome.id);
+          (biomeId === "forest" || biomeId === "plains" || biomeId === "hills" || biomeId === "snow") &&
+          this.structures.shouldPlaceTree(x, z, biomeId);
         if (treePlaced) {
-          this.structures.placeTree(chunk, lx, height, lz, biome.id);
-        } else if (height > SEA_LEVEL + 2 && this.structures.shouldPlaceFallenLog(x, z, biome.id)) {
-          this.structures.placeFallenLog(chunk, lx, height, lz, biome.id);
+          this.structures.placeTree(chunk, lx, height, lz, biomeId);
+        } else if (height > SEA_LEVEL + 2 && this.structures.shouldPlaceFallenLog(x, z, biomeId)) {
+          this.structures.placeFallenLog(chunk, lx, height, lz, biomeId);
         } else {
-          const plant = this.decorativePlant(x, z, height, biome.id);
+          this.living.decorateColumn(chunk, lx, height, lz, biomeId);
+          const plant = this.decorativePlant(x, z, height, biomeId);
           if (plant !== BlockId.AIR && height + 1 < WORLD_HEIGHT && chunk.getLocal(lx, height + 1, lz) === BlockId.AIR) {
             chunk.setLocal(lx, height + 1, lz, plant);
           }
@@ -136,47 +161,9 @@ export class TerrainGenerator {
   }
 
   private decorativePlant(x: number, z: number, height: number, biome: string): BlockId {
-    if (height <= SEA_LEVEL + 2 || biome === "beach" || biome === "desert" || biome === "snow" || biome === "mountains") {
-      return BlockId.AIR;
-    }
     const surface = this.surfaceBlock(x, z, height, biome);
-    if (surface !== BlockId.GRASS) {
-      return BlockId.AIR;
-    }
-
-    const meadow = clamp((this.noise.fbm2D(x * 0.028 + 440, z * 0.028 - 220, 3) + 1) * 0.5, 0, 1);
-    const flowerPatch = clamp((this.noise.fbm2D(x * 0.012 - 180, z * 0.012 + 610, 3) + 1) * 0.5, 0, 1);
-    const tallGrassField = clamp((this.noise.fbm2D(x * 0.016 + 710, z * 0.016 - 510, 3) + 1) * 0.5, 0, 1);
-    const wetPatch = clamp((this.noise.fbm2D(x * 0.026 + 80, z * 0.026 + 330, 3) + 1) * 0.5, 0, 1);
-    const roll = this.noise.random2D(x * 97, z * 97);
-    const accent = this.noise.random2D(x * 193 + 17, z * 193 - 31);
-
-    if (biome === "forest") {
-      if (roll < 0.1 + wetPatch * 0.15) return accent < 0.55 ? BlockId.FERN : BlockId.WILD_BUSH;
-      if (roll < 0.2 + meadow * 0.11) return accent < 0.72 ? BlockId.SHORT_GRASS : BlockId.TALL_GRASS;
-      if (flowerPatch > 0.72 && roll < 0.235) return accent < 0.5 ? BlockId.WHITE_FLOWER : BlockId.BLUE_FLOWER;
-      return BlockId.AIR;
-    }
-
-    if (biome === "hills") {
-      if (roll < 0.08 + meadow * 0.13) return accent < 0.78 ? BlockId.SHORT_GRASS : BlockId.TALL_GRASS;
-      if (flowerPatch > 0.66 && roll < 0.13) return accent < 0.34 ? BlockId.POPPY : accent < 0.68 ? BlockId.DANDELION : BlockId.WHITE_FLOWER;
-      return BlockId.AIR;
-    }
-
-    if (biome === "plains") {
-      if (flowerPatch > 0.58 && roll < 0.08 + flowerPatch * 0.16) {
-        if (accent < 0.28) return BlockId.DANDELION;
-        if (accent < 0.56) return BlockId.POPPY;
-        if (accent < 0.78) return BlockId.BLUE_FLOWER;
-        return BlockId.WHITE_FLOWER;
-      }
-      if (tallGrassField > 0.56 && roll < 0.34 + tallGrassField * 0.28) return accent < 0.76 ? BlockId.TALL_GRASS : BlockId.SHORT_GRASS;
-      if (roll < 0.16 + meadow * 0.22) return accent < 0.62 ? BlockId.SHORT_GRASS : BlockId.TALL_GRASS;
-      return BlockId.AIR;
-    }
-
-    return BlockId.AIR;
+    if (surface !== BlockId.GRASS && surface !== BlockId.SAND && surface !== BlockId.RED_SAND) return BlockId.AIR;
+    return this.living.decorativePlant(x, z, height, biome as BiomeId);
   }
 }
 

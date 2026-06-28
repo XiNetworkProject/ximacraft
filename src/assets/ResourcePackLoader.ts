@@ -51,6 +51,15 @@ const fallbackColors: Record<string, [number, number, number, number]> = {
   blue_flower: [96, 136, 220, 230],
   white_flower: [238, 232, 210, 230],
   wild_bush: [64, 118, 52, 220],
+  reeds: [110, 143, 62, 220],
+  lily_pad: [54, 118, 60, 210],
+  moss_carpet: [76, 124, 65, 220],
+  mud: [74, 51, 40, 255],
+  animal_tracks: [94, 81, 68, 190],
+  campfire: [62, 42, 29, 255],
+  weathered_planks: [111, 96, 77, 255],
+  weathered_beam: [76, 59, 44, 255],
+  weathered_beam_top: [70, 55, 42, 255],
   stone: [132, 136, 140, 255],
   sand: [215, 202, 140, 255],
   red_sand: [181, 92, 50, 255],
@@ -194,6 +203,11 @@ export class ResourcePackLoader {
     if (logicalName === "blue_flower") return this.createPlantTexture(logicalName, "flower_blue");
     if (logicalName === "white_flower") return this.createPlantTexture(logicalName, "flower_white");
     if (logicalName === "wild_bush") return this.createPlantTexture(logicalName, "bush");
+    if (logicalName === "reeds") return this.createPlantTexture(logicalName, "reeds");
+    if (logicalName === "lily_pad") return this.createFlatNatureTexture("lily");
+    if (logicalName === "moss_carpet") return this.createFlatNatureTexture("moss");
+    if (logicalName === "animal_tracks") return this.createFlatNatureTexture("tracks");
+    if (logicalName === "campfire") return this.createFlatNatureTexture("campfire");
 
     const [r, g, b, a] = fallbackColors[logicalName] ?? fallbackColors.missing;
     const canvas = document.createElement("canvas");
@@ -325,27 +339,36 @@ export class ResourcePackLoader {
 
   private createPlantTexture(
     logicalName: string,
-    kind: "grass" | "tall_grass" | "fern" | "flower_yellow" | "flower_red" | "flower_blue" | "flower_white" | "bush",
+    kind: "grass" | "tall_grass" | "fern" | "flower_yellow" | "flower_red" | "flower_blue" | "flower_white" | "bush" | "reeds",
   ): HTMLCanvasElement {
     return this.makeTexture((context, rand) => {
       context.clearRect(0, 0, 256, 256);
       const groundY = 232;
-      const stems = kind === "bush" ? 34 : kind === "fern" ? 22 : kind === "tall_grass" ? 26 : 18;
+      const stems = kind === "reeds" ? 16 : kind === "bush" ? 34 : kind === "fern" ? 22 : kind === "tall_grass" ? 26 : 18;
       for (let i = 0; i < stems; i += 1) {
         const x = 42 + rand() * 172;
         const height =
-          kind === "grass" ? 48 + rand() * 72
+          kind === "reeds" ? 122 + rand() * 98
+            : kind === "grass" ? 48 + rand() * 72
             : kind === "tall_grass" ? 96 + rand() * 102
               : kind === "bush" ? 48 + rand() * 82
                 : 70 + rand() * 92;
-        const lean = (rand() - 0.5) * (kind === "tall_grass" ? 32 : 20);
-        const green = kind === "fern" ? 118 + rand() * 58 : 104 + rand() * 76;
-        context.strokeStyle = `rgba(${32 + rand() * 34}, ${green}, ${34 + rand() * 34}, ${0.62 + rand() * 0.28})`;
-        context.lineWidth = kind === "bush" ? 5 + rand() * 5 : 3 + rand() * 3;
+        const lean = (rand() - 0.5) * (kind === "reeds" ? 12 : kind === "tall_grass" ? 32 : 20);
+        const green = kind === "fern" ? 118 + rand() * 58 : kind === "reeds" ? 118 + rand() * 42 : 104 + rand() * 76;
+        context.strokeStyle = `rgba(${kind === "reeds" ? 84 + rand() * 28 : 32 + rand() * 34}, ${green}, ${kind === "reeds" ? 48 + rand() * 22 : 34 + rand() * 34}, ${0.62 + rand() * 0.28})`;
+        context.lineWidth = kind === "reeds" ? 7 + rand() * 3 : kind === "bush" ? 5 + rand() * 5 : 3 + rand() * 3;
         context.beginPath();
         context.moveTo(x, groundY);
         context.quadraticCurveTo(x + lean * 0.35, groundY - height * 0.5, x + lean, groundY - height);
         context.stroke();
+        if (kind === "reeds" && rand() > 0.45) {
+          context.strokeStyle = `rgba(92, 72, 38, ${0.52 + rand() * 0.24})`;
+          context.lineWidth = 9 + rand() * 4;
+          context.beginPath();
+          context.moveTo(x + lean, groundY - height + 6);
+          context.lineTo(x + lean + (rand() - 0.5) * 8, groundY - height - 18 - rand() * 28);
+          context.stroke();
+        }
         if (kind === "fern") {
           for (let leaf = 0; leaf < 5; leaf += 1) {
             const ty = groundY - height * (0.28 + leaf * 0.12);
@@ -391,6 +414,64 @@ export class ResourcePackLoader {
         context.fillRect(36 + rand() * 184, 210 + rand() * 28, 1 + rand() * 4, 1 + rand() * 10);
       }
     }, logicalName);
+  }
+
+  private createFlatNatureTexture(kind: "lily" | "moss" | "tracks" | "campfire"): HTMLCanvasElement {
+    return this.makeTexture((context, rand) => {
+      context.clearRect(0, 0, 256, 256);
+      if (kind === "lily") {
+        for (let i = 0; i < 5; i += 1) {
+          context.fillStyle = `rgba(${40 + rand() * 28}, ${104 + rand() * 64}, ${48 + rand() * 30}, ${0.72 + rand() * 0.18})`;
+          context.beginPath();
+          context.ellipse(128 + (rand() - 0.5) * 34, 128 + (rand() - 0.5) * 28, 62 + rand() * 18, 38 + rand() * 14, rand() * Math.PI, 0.2, Math.PI * 1.92);
+          context.fill();
+        }
+        context.strokeStyle = "rgba(20, 80, 30, 0.38)";
+        context.lineWidth = 5;
+        context.beginPath();
+        context.moveTo(128, 128);
+        context.lineTo(190, 96);
+        context.stroke();
+        return;
+      }
+      if (kind === "moss") {
+        this.noiseFill(context, rand, [42, 88, 38], [96, 142, 72], 210);
+        context.fillStyle = "rgba(30, 70, 30, 0.26)";
+        for (let i = 0; i < 180; i += 1) context.fillRect(rand() * 256, rand() * 256, 2 + rand() * 12, 1 + rand() * 5);
+        return;
+      }
+      if (kind === "tracks") {
+        context.fillStyle = "rgba(90, 76, 62, 0.18)";
+        context.fillRect(0, 0, 256, 256);
+        context.fillStyle = "rgba(46, 34, 28, 0.45)";
+        for (let i = 0; i < 5; i += 1) {
+          const x = 74 + i * 26 + (rand() - 0.5) * 10;
+          const y = 72 + i * 24 + (rand() - 0.5) * 20;
+          context.beginPath();
+          context.ellipse(x, y, 15, 9, -0.75, 0, Math.PI * 2);
+          context.fill();
+          context.beginPath();
+          context.ellipse(x + 48, y + 18, 15, 9, 0.75, 0, Math.PI * 2);
+          context.fill();
+        }
+        return;
+      }
+      context.fillStyle = "rgba(44, 30, 22, 0.94)";
+      context.fillRect(54, 106, 148, 36);
+      context.fillRect(90, 70, 34, 118);
+      context.fillStyle = "rgba(210, 88, 28, 0.38)";
+      context.beginPath();
+      context.ellipse(128, 126, 26, 16, 0, 0, Math.PI * 2);
+      context.fill();
+      context.strokeStyle = "rgba(24, 18, 14, 0.45)";
+      context.lineWidth = 8;
+      context.beginPath();
+      context.moveTo(60, 116);
+      context.lineTo(198, 144);
+      context.moveTo(96, 70);
+      context.lineTo(124, 188);
+      context.stroke();
+    }, kind);
   }
 
   private makeTexture(draw: (context: CanvasRenderingContext2D, rand: () => number) => void, seedText: string): HTMLCanvasElement {

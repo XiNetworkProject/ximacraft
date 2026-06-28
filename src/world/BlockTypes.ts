@@ -113,6 +113,16 @@ export enum BlockId {
   DARK_OAK_LOG_X = 111,
   DARK_OAK_LOG_Z = 112,
   DARK_OAK_LEAVES = 113,
+  REEDS = 114,
+  LILY_PAD = 115,
+  MOSS_CARPET = 116,
+  MUD = 117,
+  ANIMAL_TRACKS = 118,
+  CAMPFIRE = 119,
+  WEATHERED_PLANKS = 120,
+  WEATHERED_BEAM = 121,
+  WEATHERED_BEAM_X = 122,
+  WEATHERED_BEAM_Z = 123,
 }
 
 export function isSnowLayer(id: BlockId | number): boolean {
@@ -132,7 +142,11 @@ export function isPlant(id: BlockId | number): boolean {
     id === BlockId.POPPY ||
     id === BlockId.BLUE_FLOWER ||
     id === BlockId.WHITE_FLOWER ||
-    id === BlockId.WILD_BUSH
+    id === BlockId.WILD_BUSH ||
+    id === BlockId.REEDS ||
+    id === BlockId.LILY_PAD ||
+    id === BlockId.MOSS_CARPET ||
+    id === BlockId.ANIMAL_TRACKS
   );
 }
 

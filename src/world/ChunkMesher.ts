@@ -418,6 +418,12 @@ export class ChunkMesher {
     if (blockId === BlockId.DANDELION || blockId === BlockId.POPPY || blockId === BlockId.BLUE_FLOWER || blockId === BlockId.WHITE_FLOWER) {
       return new THREE.Color(0xffffff);
     }
+    if (blockId === BlockId.LILY_PAD || blockId === BlockId.MOSS_CARPET) {
+      return this.textureTint(this.foliageTint(x, z, false), 0.72);
+    }
+    if (blockId === BlockId.ANIMAL_TRACKS) {
+      return new THREE.Color(0x8b7a62);
+    }
     const base = blockId === BlockId.FERN || blockId === BlockId.WILD_BUSH
       ? this.foliageTint(x, z, false)
       : this.grassTint(x, z);
@@ -432,6 +438,8 @@ export class ChunkMesher {
         return { width: 0.45 + seed * 0.08, height: 0.8 + seed * 0.22, wind: 0.82 };
       case BlockId.WILD_BUSH:
         return { width: 0.55 + seed * 0.12, height: 0.68 + seed * 0.2, wind: 0.52 };
+      case BlockId.REEDS:
+        return { width: 0.42 + seed * 0.08, height: 1.45 + seed * 0.65, wind: 1.08 };
       case BlockId.DANDELION:
       case BlockId.POPPY:
       case BlockId.BLUE_FLOWER:
@@ -445,6 +453,7 @@ export class ChunkMesher {
 
   private blockWindWeight(blockId: BlockId): number {
     if (blockId === BlockId.OAK_LEAVES || blockId === BlockId.BIRCH_LEAVES) return 0.16;
+    if (blockId === BlockId.LILY_PAD || blockId === BlockId.MOSS_CARPET || blockId === BlockId.ANIMAL_TRACKS || blockId === BlockId.CAMPFIRE) return 0;
     if (isPlant(blockId)) return 0.85;
     return 0;
   }

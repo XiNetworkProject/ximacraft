@@ -18,6 +18,10 @@ import { CloudPopulationBand } from "../src/weather/scene/WeatherScene";
 import { SurfaceWeatherState } from "../src/weather/ground/SurfaceWeatherState";
 import { GroundAccumulationSystem } from "../src/weather/ground/GroundAccumulationSystem";
 import { VisibilityController } from "../src/weather/visibility/VisibilityController";
+import { TerrainGenerator } from "../src/world/TerrainGenerator";
+import { BlockId } from "../src/world/BlockTypes";
+import { Chunk } from "../src/world/Chunk";
+import { SEA_LEVEL } from "../src/utils/Constants";
 
 let passed = 0;
 let failed = 0;
@@ -298,6 +302,85 @@ console.log("\n[visibility] fog, snow squalls and sand have distinct ranges");
   check("dense fog sharply limits range", fog.fogFar < 300, `far=${fog.fogFar.toFixed(1)}`);
   check("whiteout is at least as restrictive as dense fog", whiteout.fogFar <= fog.fogFar, `whiteout=${whiteout.fogFar.toFixed(1)} fog=${fog.fogFar.toFixed(1)}`);
   check("sandstorm exposes a warm dust tint", sand.dustTint > 0.5, `dust=${sand.dustTint.toFixed(2)}`);
+}
+
+// ============================================================================
+console.log("\n[living] micro-biomes and rare POI are seed-deterministic");
+{
+  const a = new TerrainGenerator("living-world-test");
+  const b = new TerrainGenerator("living-world-test");
+  const foundMicroBiomes = new Set<string>();
+  let sameMicroBiomes = true;
+  for (let z = -192; z <= 192; z += 16) {
+    for (let x = -192; x <= 192; x += 16) {
+      const height = a.getHeight(x, z);
+      const biome = a.biomes.sample(x, z, height).id;
+      const ma = a.living.sampleMicroBiome(x, z, biome, height);
+      const mb = b.living.sampleMicroBiome(x, z, biome, height);
+      sameMicroBiomes &&= ma === mb;
+      foundMicroBiomes.add(ma);
+    }
+  }
+
+  let poiDeterministic = true;
+  let sawPoi = false;
+  for (let z = -256; z <= 256; z += 1) {
+    for (let x = -256; x <= 256; x += 1) {
+      const height = a.getHeight(x, z);
+      const biome = a.biomes.sample(x, z, height).id;
+      const pa = a.living.poiAt(x, z, biome, height);
+      const pb = b.living.poiAt(x, z, biome, height);
+      poiDeterministic &&= pa === pb;
+      sawPoi ||= pa !== null;
+    }
+  }
+
+  check("micro-biomes repeat exactly for the same seed", sameMicroBiomes);
+  check("micro-biome scan produces varied natural pockets", foundMicroBiomes.size >= 4, `types=${[...foundMicroBiomes].join(",")}`);
+  check("rare POI anchors repeat exactly for the same seed", poiDeterministic);
+  check("rare POI anchors exist in a broad deterministic scan", sawPoi);
+}
+
+// ============================================================================
+console.log("\n[living] vegetation decorators generate grouped natural detail");
+{
+  const gen = new TerrainGenerator("living-vegetation-test");
+  let meadowPlants = 0;
+  let forestGroundCover = 0;
+  for (let z = -160; z <= 160; z += 4) {
+    for (let x = -160; x <= 160; x += 4) {
+      const meadow = gen.living.decorativePlant(x, z, 72, "plains");
+      if ([BlockId.TALL_GRASS, BlockId.SHORT_GRASS, BlockId.DANDELION, BlockId.POPPY, BlockId.BLUE_FLOWER, BlockId.WHITE_FLOWER].includes(meadow)) meadowPlants += 1;
+
+      const forest = gen.living.decorativePlant(x + 900, z - 300, 78, "forest");
+      if ([BlockId.FERN, BlockId.WILD_BUSH, BlockId.MOSS_CARPET].includes(forest)) forestGroundCover += 1;
+    }
+  }
+
+  check("meadows create visible grass and flower groups", meadowPlants > 300, `count=${meadowPlants}`);
+  check("forests create fern/bush/moss undergrowth", forestGroundCover > 160, `count=${forestGroundCover}`);
+
+  let shoreDecor = 0;
+  for (let cz = -3; cz <= 3; cz += 1) {
+    for (let cx = -3; cx <= 3; cx += 1) {
+      const chunk = new Chunk(cx, cz);
+      const h = SEA_LEVEL + 1;
+      for (let z = 0; z < 16; z += 1) {
+        for (let x = 0; x < 16; x += 1) {
+          chunk.setLocal(x, h, z, BlockId.WATER);
+        }
+      }
+      for (let z = 2; z < 14; z += 2) {
+        for (let x = 2; x < 14; x += 2) {
+          chunk.setLocal(x, h, z, BlockId.GRASS);
+          gen.living.decorateColumn(chunk, x, h, z, "plains");
+          const above = chunk.getLocal(x, h + 1, z);
+          if (above === BlockId.REEDS || above === BlockId.ANIMAL_TRACKS || chunk.getLocal(x, h, z) === BlockId.MUD) shoreDecor += 1;
+        }
+      }
+    }
+  }
+  check("shore decorators add reeds, mud or tracks near water", shoreDecor > 80, `count=${shoreDecor}`);
 }
 
 // ============================================================================

@@ -15,6 +15,11 @@ import { ForecastSystem } from "../weather/forecast/ForecastSystem";
 import { WeatherAlertSystem } from "../weather/alerts/WeatherAlertSystem";
 import { WeatherMapUI } from "../ui/weather/WeatherMapUI";
 import { WeatherDirector } from "../weather/WeatherDirector";
+import { LivingWorldSystem } from "../living/LivingWorldSystem";
+import { SeasonSystem, SeasonId } from "../living/SeasonSystem";
+import { AmbientBiomeAudioSystem } from "../living/AmbientBiomeAudioSystem";
+import { WorldMemorySystem } from "../living/WorldMemorySystem";
+import { WildlifeSpecies } from "../living/LivingWorldTypes";
 
 export type CommandContext = {
   time: Time;
@@ -51,6 +56,10 @@ export type CommandContext = {
   setQualityPreset: (preset: "low" | "balanced" | "high") => void;
   getQualityPreset: () => "low" | "balanced" | "high";
   resetCloudVisuals: () => void;
+  livingWorld?: LivingWorldSystem;
+  seasonSystem?: SeasonSystem;
+  ambientBiomeAudio?: AmbientBiomeAudioSystem;
+  worldMemory?: WorldMemorySystem;
 };
 
 const weatherTypes: WeatherType[] = [
@@ -123,6 +132,11 @@ export const COMMANDS: CommandDefinition[] = [
   { usage: "/renderdistance 2-16", prefix: "/renderdistance", description: "Set chunk render distance." },
   { usage: "/quality low|balanced|high", prefix: "/quality", description: "Switch performance/visual preset." },
   { usage: "/world regen loaded", prefix: "/world regen loaded", description: "Regenerate loaded terrain chunks with the current generator." },
+  { usage: "/living debug", prefix: "/living debug", description: "Inspect living world fauna, ambience and activity." },
+  { usage: "/living fauna on|off|all|bird|butterfly|dragonfly|firefly|rabbit|deer|fish|frog|bat", prefix: "/living fauna", description: "Toggle or force wildlife for testing." },
+  { usage: "/living traces", prefix: "/living traces", description: "Inspect world memory/traces state." },
+  { usage: "/season set auto|spring|summer|autumn|winter", prefix: "/season set", description: "Force or release the season system." },
+  { usage: "/poi debug", prefix: "/poi debug", description: "Inspect micro-biome and rare POI seed logic here." },
   { usage: "/seed", prefix: "/seed", description: "Show world seed." },
   { usage: "/save", prefix: "/save", description: "Save game." },
   { usage: "/load", prefix: "/load", description: "Load game." },
@@ -305,6 +319,15 @@ export class CommandSystem {
         case "world":
           this.executeWorld(parts);
           break;
+        case "living":
+          this.executeLiving(parts);
+          break;
+        case "season":
+          this.executeSeason(parts);
+          break;
+        case "poi":
+          this.executePoi(parts);
+          break;
         case "save":
           void this.context.save().then(() => this.write("Game saved."));
           break;
@@ -478,6 +501,71 @@ export class CommandSystem {
       return;
     }
     this.write("Usage: /world regen loaded");
+  }
+
+  private executeLiving(parts: string[]): void {
+    const living = this.context!.livingWorld;
+    if (!living) {
+      this.write("Living world system unavailable.");
+      return;
+    }
+    if (parts[1] === "debug" || !parts[1]) {
+      this.write(living.debugText());
+      this.write(this.context!.ambientBiomeAudio?.debug() ?? "Ambience unavailable.");
+      return;
+    }
+    if (parts[1] === "traces") {
+      this.write(this.context!.worldMemory?.debug(this.context!.weatherEngine.sampleObserver()) ?? "World memory unavailable.");
+      return;
+    }
+    if (parts[1] === "fauna") {
+      const arg = parts[2] as WildlifeSpecies | "all" | "on" | "off" | undefined;
+      if (arg === "on") {
+        living.setEnabled(true);
+        this.write("Living fauna enabled.");
+        return;
+      }
+      if (arg === "off") {
+        living.setEnabled(false);
+        this.write("Living fauna disabled.");
+        return;
+      }
+      const species = ["bird", "butterfly", "dragonfly", "firefly", "rabbit", "deer", "fish", "frog", "bat"];
+      if (arg === "all" || (arg && species.includes(arg))) {
+        living.force(arg, 60);
+        this.write(`Forcing fauna: ${arg} for 60s.`);
+        return;
+      }
+    }
+    this.write("Usage: /living debug | /living fauna on|off|all|bird|butterfly|dragonfly|firefly|rabbit|deer|fish|frog|bat | /living traces");
+  }
+
+  private executeSeason(parts: string[]): void {
+    const seasonSystem = this.context!.seasonSystem;
+    if (!seasonSystem) {
+      this.write("Season system unavailable.");
+      return;
+    }
+    if (parts[1] === "set") {
+      const value = parts[2] as SeasonId | "auto" | undefined;
+      if (value === "auto" || value === "spring" || value === "summer" || value === "autumn" || value === "winter") {
+        seasonSystem.setSeason(value);
+        this.write(`Season set to ${value}.`);
+        return;
+      }
+    }
+    this.write(seasonSystem.debug(this.context!.time.ticks));
+  }
+
+  private executePoi(_parts: string[]): void {
+    const world = this.context!.world;
+    const x = Math.floor(this.context!.player.position.x);
+    const z = Math.floor(this.context!.player.position.z);
+    const height = world.getSurfaceHeight(x, z);
+    const biome = world.getBiomeAt(x, z).id;
+    const micro = world.terrain.living.sampleMicroBiome(x, z, biome, height);
+    const poi = world.terrain.living.poiAt(x, z, biome, height);
+    this.write(`POI debug x=${x} z=${z} biome=${biome} micro=${micro} anchor=${poi ?? "none"}`);
   }
 
   private showCommandHelp(filterRaw = ""): void {
