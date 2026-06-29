@@ -6,6 +6,29 @@ import { Time } from "../game/Time";
 import { WeatherSystem } from "../world/WeatherSystem";
 import { WeatherSample } from "../weather/WeatherTypes";
 import type { EnvironmentState } from "../environment/EnvironmentState";
+import { WORLD_DAY_TICKS } from "../utils/Constants";
+
+const WEATHER_LABELS: Record<string, string> = {
+  clear: "Clair",
+  cloudy: "Nuageux",
+  rain: "Pluie",
+  storm: "Orage",
+  thunderstorm: "Orage",
+  snow: "Neige",
+  blizzard: "Blizzard",
+  hail: "Grêle",
+  fog: "Brume",
+  mist: "Brume",
+  rainbow: "Arc-en-ciel",
+};
+
+const SEASON_LABELS: Record<string, string> = {
+  spring: "Printemps",
+  summer: "Été",
+  autumn: "Automne",
+  fall: "Automne",
+  winter: "Hiver",
+};
 
 export class HUD {
   readonly root: HTMLDivElement;
@@ -68,13 +91,41 @@ export class HUD {
       return;
     }
     this.lastSignature = signature;
+
+    // HUD compact et contextuel (le détail technique reste dans F3).
+    const mode = player.gameMode === "creative" ? "Créatif" : "Survie";
+    const dayFrac = (((time.ticks % WORLD_DAY_TICKS) + WORLD_DAY_TICKS) % WORLD_DAY_TICKS) / WORLD_DAY_TICKS;
+    const minutes = Math.floor(dayFrac * 24 * 60);
+    const clock = `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+    const isDay = dayFrac > 0.25 && dayFrac < 0.75;
+    const weatherKey = (regional?.weatherType ?? weather.current ?? "clear").toLowerCase();
+    const weatherLabel = WEATHER_LABELS[weatherKey] ?? capitalize(weatherKey);
+    const temp = regional ? `${Math.round(regional.temperature)}°` : "";
+    const seasonLabel = environment ? SEASON_LABELS[environment.season.season.toLowerCase()] ?? environment.season.season : "";
+    const health = Math.max(0, Math.min(1, player.health / 20));
+    const hunger = Math.max(0, Math.min(1, player.hunger / 20));
+    // Seulement quand pertinent : chaleur/froid ressentis notables.
+    const feels = environment?.thermal.feelsLike;
+    const feelsChip =
+      feels !== undefined && (feels <= 2 || feels >= 30)
+        ? `<span class="hud-chip ${feels <= 2 ? "cold" : "hot"}">Ressenti ${Math.round(feels)}°</span>`
+        : "";
+
     this.line.innerHTML = `
-      <div><span class="hearts">${"H".repeat(Math.ceil(player.health / 2)).padEnd(10, "-")}</span> <span class="hunger">${"F".repeat(Math.ceil(player.hunger / 2)).padEnd(10, "-")}</span></div>
-      <div>${player.gameMode}${player.creativeFlying ? " flying" : ""} | ${selected} | XYZ ${player.position.x.toFixed(1)} ${player.position.y.toFixed(1)} ${player.position.z.toFixed(1)}</div>
-      <div>Chunks ${stats.loadedChunks} | Triangles ${stats.triangles.toLocaleString()} | Time ${Math.floor(time.ticks)} | Weather ${weather.current} ${weather.intensity.toFixed(2)}</div>
-      <div>Regional ${regional?.weatherType ?? "n/a"} | Temp ${regional ? regional.temperature.toFixed(1) : "n/a"}C | Wind ${regional ? regional.windSpeed.toFixed(1) : "n/a"}</div>
-      <div>Season ${environment?.season.season ?? "n/a"} | Feels ${environment ? environment.thermal.feelsLike.toFixed(1) : "n/a"}C | Ground ${environment?.surface.mood ?? "n/a"} | ${environment?.precipitationKind ?? "n/a"} | Fauna ${environment?.fauna.label ?? "n/a"} | Fog ${environment ? environment.fog.visibilityMeters : "n/a"}m</div>
-      <div>Textures ${textures.stats.loadedCount} loaded, ${textures.stats.fallbacks.length} fallback</div>
+      <div class="hud-status">
+        <span class="hud-mode ${player.gameMode}">${mode}${player.creativeFlying ? " · vol" : ""}</span>
+        <span class="hud-selected">${selected}</span>
+      </div>
+      <div class="hud-vitals">
+        <span class="hud-bar health"><i style="width:${(health * 100).toFixed(0)}%"></i></span>
+        <span class="hud-bar hunger"><i style="width:${(hunger * 100).toFixed(0)}%"></i></span>
+      </div>
+      <div class="hud-env">
+        <span class="hud-chip">${isDay ? "☀" : "☾"} ${clock}</span>
+        <span class="hud-chip">${weatherLabel}${temp ? ` ${temp}` : ""}</span>
+        ${seasonLabel ? `<span class="hud-chip">${seasonLabel}</span>` : ""}
+        ${feelsChip}
+      </div>
     `;
   }
 
@@ -85,4 +136,8 @@ export class HUD {
     this.toasts.appendChild(toast);
     window.setTimeout(() => toast.remove(), 3200);
   }
+}
+
+function capitalize(value: string): string {
+  return value.length === 0 ? value : value[0].toUpperCase() + value.slice(1);
 }
