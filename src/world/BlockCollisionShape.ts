@@ -14,7 +14,7 @@ export function collisionHeightForShape(shape: BlockShape | undefined, fallback 
     case "flat":
       return 0.04;
     case "path":
-      return 0.12;
+      return 1;
     case "slab_bottom":
       return 0.5;
     case "fence":

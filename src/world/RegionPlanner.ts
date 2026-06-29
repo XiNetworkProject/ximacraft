@@ -34,8 +34,8 @@ export class RegionPlanner {
       return this.settlementColumn(settlement, x, z, height);
     }
     const road = this.roadStrengthAt(x, z, height, biome, getHeight);
-    if (road > 0.72) {
-      return { surface: road > 0.9 ? BlockId.COBBLESTONE_PATH : road > 0.8 ? BlockId.GRAVEL_PATH : BlockId.DIRT_PATH, blocks: [], blocksDecoration: road > 0.82 };
+    if (road > 0.78) {
+      return { surface: road > 0.92 ? BlockId.GRAVEL_PATH : BlockId.DIRT_PATH, blocks: [], blocksDecoration: road > 0.88 };
     }
     return { blocks: [], blocksDecoration: false };
   }
@@ -77,7 +77,7 @@ export class RegionPlanner {
           const linkRoll = this.noise.random2D((cellX + dx) * 419 + nx * 17, (cellZ + dz) * 419 + nz * 29);
           if (linkRoll > 0.55) continue;
           const d = this.distanceToSegment(x, z, a.centerX, a.centerZ, b.centerX, b.centerZ);
-          const width = a.kind === "village" || b.kind === "village" ? 4.4 : 3.1;
+          const width = a.kind === "village" || b.kind === "village" ? 2.9 : 2.05;
           if (d < width) best = Math.max(best, clamp(1 - d / width, 0, 1));
         }
       }
@@ -87,12 +87,12 @@ export class RegionPlanner {
 
   private planSettlementCell(cellX: number, cellZ: number, cellSize: number): SettlementPlan | null {
     const roll = this.noise.random2D(cellX * 313 + 71, cellZ * 313 - 91);
-    if (roll > 0.5) return null;
+    if (roll > 0.38) return null;
     const margin = 170;
     const centerX = cellX * cellSize + margin + Math.floor(this.noise.random2D(cellX * 337 - 19, cellZ * 337 + 37) * (cellSize - margin * 2));
     const centerZ = cellZ * cellSize + margin + Math.floor(this.noise.random2D(cellX * 353 + 23, cellZ * 353 - 29) * (cellSize - margin * 2));
     const kind: SettlementKind = roll < 0.1 ? "village" : "hamlet";
-    return { id: `${cellX}:${cellZ}`, kind, centerX, centerZ, radius: kind === "village" ? 84 : 54 };
+    return { id: `${cellX}:${cellZ}`, kind, centerX, centerZ, radius: kind === "village" ? 62 : 36 };
   }
 
   private acceptsSettlement(x: number, z: number, biome: BiomeId, getHeight: (x: number, z: number) => number): boolean {
@@ -111,7 +111,8 @@ export class RegionPlanner {
     const dx = x - plan.centerX;
     const dz = z - plan.centerZ;
     const blocks: RegionColumnBlock[] = [];
-    const mainRoad = Math.abs(dx) <= 2 || Math.abs(dz) <= 2;
+    const roadWidth = plan.kind === "village" ? 1 : 0;
+    const mainRoad = Math.abs(dx) <= roadWidth || Math.abs(dz) <= roadWidth;
     if (mainRoad) {
       return { surface: plan.kind === "village" ? BlockId.GRAVEL_PATH : BlockId.DIRT_PATH, blocks, blocksDecoration: true };
     }
@@ -124,8 +125,8 @@ export class RegionPlanner {
 
     const house = this.houseFootprint(plan, dx, dz);
     if (!house) {
-      const yard = Math.hypot(dx, dz) < plan.radius * 0.72 && this.noise.random2D(x * 0.37, z * 0.37) > 0.94;
-      return { surface: yard ? BlockId.DIRT_PATH : undefined, blocks, blocksDecoration: false };
+      const yard = Math.hypot(dx, dz) < plan.radius * 0.6 && this.noise.random2D(x * 0.37, z * 0.37) > 0.985;
+      return { surface: yard ? BlockId.GRAVEL_PATH : undefined, blocks, blocksDecoration: false };
     }
 
     const localX = dx - house.cx;
@@ -133,13 +134,14 @@ export class RegionPlanner {
     const w = house.w;
     const d = house.d;
     const edge = Math.abs(localX) === Math.floor(w / 2) || Math.abs(localZ) === Math.floor(d / 2);
+    const corner = Math.abs(localX) === Math.floor(w / 2) && Math.abs(localZ) === Math.floor(d / 2);
     const door = localZ === -Math.floor(d / 2) && Math.abs(localX) <= 1;
     const window = edge && !door && Math.abs(localX + localZ) % 4 === 0;
     blocks.push({ dy: 0, block: BlockId.WEATHERED_PLANKS });
     if (edge) {
-      blocks.push({ dy: 1, block: door ? BlockId.OAK_DOOR_NORTH : BlockId.WEATHERED_BEAM });
-      blocks.push({ dy: 2, block: window ? BlockId.GLASS_PANE : BlockId.WEATHERED_BEAM });
-      blocks.push({ dy: 3, block: BlockId.WEATHERED_BEAM });
+      blocks.push({ dy: 1, block: door ? BlockId.OAK_DOOR_NORTH : corner ? BlockId.WEATHERED_BEAM : BlockId.WEATHERED_PLANKS });
+      blocks.push({ dy: 2, block: window ? BlockId.GLASS_PANE : corner ? BlockId.WEATHERED_BEAM : BlockId.WEATHERED_PLANKS });
+      blocks.push({ dy: 3, block: corner ? BlockId.WEATHERED_BEAM : BlockId.WEATHERED_PLANKS });
     } else {
       blocks.push({ dy: 1, block: BlockId.AIR }, { dy: 2, block: BlockId.AIR }, { dy: 3, block: BlockId.AIR });
     }
@@ -150,7 +152,7 @@ export class RegionPlanner {
   }
 
   private houseFootprint(plan: SettlementPlan, dx: number, dz: number): { cx: number; cz: number; w: number; d: number } | null {
-    const grid = plan.kind === "village" ? 20 : 18;
+    const grid = plan.kind === "village" ? 22 : 20;
     const cellX = Math.round(dx / grid);
     const cellZ = Math.round(dz / grid);
     if (cellX === 0 || cellZ === 0) return null;
@@ -158,7 +160,7 @@ export class RegionPlanner {
     const centerZ = cellZ * grid;
     if (Math.hypot(centerX, centerZ) > plan.radius - 8) return null;
     const roll = this.noise.random2D(plan.centerX + cellX * 101, plan.centerZ + cellZ * 101);
-    if (roll > (plan.kind === "village" ? 0.58 : 0.38)) return null;
+    if (roll > (plan.kind === "village" ? 0.4 : 0.24)) return null;
     const w = roll < 0.22 ? 9 : 7;
     const d = roll > 0.44 ? 9 : 7;
     if (Math.abs(dx - centerX) <= Math.floor(w / 2) && Math.abs(dz - centerZ) <= Math.floor(d / 2)) {

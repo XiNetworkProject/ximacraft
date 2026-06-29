@@ -3,7 +3,7 @@ import { TextureAtlas } from "../assets/TextureAtlas";
 import { CHUNK_SIZE } from "../utils/Constants";
 import { worldToChunk } from "../utils/MathUtils";
 import { BlockRegistry } from "./BlockRegistry";
-import { BlockFace, BlockId, isPlant, isSnowLayer, snowLayerLevel } from "./BlockTypes";
+import { BlockFace, BlockId, isPathBlock, isPlant, isSnowLayer, snowLayerLevel } from "./BlockTypes";
 import { Chunk } from "./Chunk";
 import { World } from "./World";
 import { BlockConnectionState, NO_CONNECTIONS } from "./BlockConnections";
@@ -473,6 +473,13 @@ export class ChunkMesher {
     }
     if (isPlant(blockId)) {
       return this.plantColor(blockId, x, z).multiplyScalar(Math.max(shade, 0.9));
+    }
+    if (isPathBlock(blockId)) {
+      const tint =
+        blockId === BlockId.DIRT_PATH ? new THREE.Color(0x8a7258) :
+        blockId === BlockId.GRAVEL_PATH ? new THREE.Color(0x8a8980) :
+        new THREE.Color(0x8f918a);
+      return this.textureTint(tint, face === "top" ? 0.62 : 0.48).multiplyScalar(Math.max(shade, 0.9));
     }
     if (blockId === BlockId.SNOW_BLOCK || isSnowLayer(blockId)) {
       return new THREE.Color(face === "top" ? 0xd7dde0 : 0xc1c9cc).multiplyScalar(Math.max(shade, 0.9));

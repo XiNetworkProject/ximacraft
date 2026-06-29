@@ -16,7 +16,7 @@ export class BlockGeometryBuilder {
       case "flat":
         return [box(0, 0, 0, 1, Math.max(0.025, renderHeight), 1)];
       case "path":
-        return [box(0, 0, 0, 1, 0.12, 1)];
+        return [box(0, 0, 0, 1, 1, 1)];
       case "slab_bottom":
         return [box(0, 0, 0, 1, 0.5, 1)];
       case "slab_top":

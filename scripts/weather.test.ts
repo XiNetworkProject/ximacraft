@@ -421,9 +421,11 @@ console.log("\n[world] region planner and block geometry are deterministic");
   const slab = BlockGeometryBuilder.boxesFor("slab_bottom", { north: false, south: false, east: false, west: false, up: false, down: false }, 1);
   const stair = BlockGeometryBuilder.boxesFor("stair_north", { north: false, south: false, east: false, west: false, up: false, down: false }, 1);
   const fence = BlockGeometryBuilder.boxesFor("fence", { north: true, south: false, east: true, west: false, up: false, down: false }, 1);
+  const path = BlockGeometryBuilder.boxesFor("path", { north: false, south: false, east: false, west: false, up: false, down: false }, 1);
   check("slab geometry is half-height", slab.length === 1 && slab[0].maxY === 0.5);
   check("stair geometry is built from multiple boxes, not a full cube", stair.length >= 2);
   check("connected fence geometry adds two rails only toward connections", fence.length === 5);
+  check("terrain path geometry is full height to avoid blue ground holes", path.length === 1 && path[0].maxY === 1);
 }
 
 // ============================================================================
