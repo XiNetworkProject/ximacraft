@@ -16,12 +16,21 @@ export type MacroWorldSample = {
 
 export class MacroWorldPlanner {
   readonly hydrology: HydrologyPlanner;
+  private readonly sampleCache = new Map<string, MacroWorldSample>();
 
   constructor(private readonly noise: Noise) {
     this.hydrology = new HydrologyPlanner(noise);
   }
 
   sample(x: number, z: number): MacroWorldSample {
+    const ix = Math.floor(x);
+    const iz = Math.floor(z);
+    const key = `${ix},${iz}`;
+    const cached = this.sampleCache.get(key);
+    if (cached) return cached;
+    if (this.sampleCache.size > 420_000) this.sampleCache.clear();
+    x = ix;
+    z = iz;
     const continentality = this.norm(this.noise.fbm2D(x * 0.00145, z * 0.00145, 5));
     const humidity = this.norm(this.noise.fbm2D(x * 0.0019 - 93.7, z * 0.0019 + 12.5, 4));
     const temperature = this.norm(this.noise.fbm2D(x * 0.0016 + 29.3, z * 0.0016 - 71.4, 4));
@@ -42,7 +51,9 @@ export class MacroWorldPlanner {
     const riverCut = hydrology.river * (14 + Math.max(0, continentality - 0.45) * 22) + hydrology.stream * 4;
     const floodLift = hydrology.floodplain * hydrology.floodplain * 3.5;
     const altitude = Math.floor(clamp(roughHeight - riverCut + floodLift, 18, WORLD_HEIGHT - 14));
-    return { altitude, continentality, humidity, temperature, erosion, terrainAge, mountainMask, hydrology: this.hydrology.sample(x, z, altitude) };
+    const sample = { altitude, continentality, humidity, temperature, erosion, terrainAge, mountainMask, hydrology: this.hydrology.sample(x, z, altitude) };
+    this.sampleCache.set(key, sample);
+    return sample;
   }
 
   private norm(value: number): number {

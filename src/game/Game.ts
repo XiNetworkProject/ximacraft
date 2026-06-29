@@ -26,6 +26,7 @@ import { WeatherMapDataBuilder } from "../weather/map/WeatherMapData";
 import { BiomeWeatherModifier } from "../weather/biome/BiomeWeatherModifier";
 import { WeatherAudioSystem } from "../weather/audio/WeatherAudioSystem";
 import { WeatherRenderer } from "../render/weather/WeatherRenderer";
+import { FogBankRenderer } from "../render/weather/FogBankRenderer";
 import { CloudShadowSystem } from "../render/weather/CloudShadowSystem";
 import { WaterWaves } from "../render/weather/WaterWaves";
 import { VegetationWind } from "../render/world/VegetationWind";
@@ -116,6 +117,7 @@ export class Game {
   private readonly alertSystem = new WeatherAlertSystem();
   private readonly weatherMapData = new WeatherMapDataBuilder(this.weatherEngine, this.forecastSystem);
   private readonly weatherRenderer: WeatherRenderer;
+  private readonly fogBankRenderer: FogBankRenderer;
   // Ombres de nuages projetées au sol (terrain/feuillage/eau).
   private readonly cloudShadows = new CloudShadowSystem();
   // Vagues d'eau animées.
@@ -200,6 +202,7 @@ export class Game {
     // Moteur météo régional (v0.1). Le rendu reste désactivé par défaut pour ne
     // pas entrer en conflit avec SkySystem ; on l'active via `/weather render on`.
     this.weatherRenderer = new WeatherRenderer(this.renderer.scene, this.renderer.camera, this.weatherEngine);
+    this.fogBankRenderer = new FogBankRenderer(this.renderer.scene);
     // Nuages discrets (v0.3) : naissent/grossissent/s'assombrissent/se dissipent.
     // Couche météo riche (v0.4) : sol, rideaux de pluie distants, éclairs.
     this.groundRenderer = new GroundCoverRenderer(this.renderer.scene, this.surfaceState);
@@ -556,6 +559,7 @@ export class Game {
     });
     world.environmentVisualState = environment.visual;
     this.refreshEnvironmentVisualsIfNeeded(environment, world);
+    this.fogBankRenderer.update(delta, this.environmentDirector, camera, this.qualityPreset);
     document.documentElement.dataset.environmentState = JSON.stringify({
       season: environment.season.season,
       temp: Number(environment.temperature.toFixed(1)),

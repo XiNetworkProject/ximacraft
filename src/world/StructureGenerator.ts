@@ -3,6 +3,7 @@ import { Noise } from "../utils/Noise";
 import { BlockId, isLeaves, isPlant } from "./BlockTypes";
 import { Chunk } from "./Chunk";
 import { BiomeId, isDryBiome, isForestBiome, isMountainBiome } from "./BiomeGenerator";
+import { ForestPatchPlanner } from "./forest/ForestPatchPlanner";
 
 type TreeSpecies = "oak" | "birch" | "spruce" | "dark_oak";
 type TreeShape = "young" | "standard" | "tall" | "large" | "giant" | "dead";
@@ -15,37 +16,14 @@ interface WoodSet {
 }
 
 export class StructureGenerator {
-  constructor(private readonly noise: Noise) {}
+  private readonly forestPatches: ForestPatchPlanner;
 
-  shouldPlaceTree(x: number, z: number, biome: BiomeId): boolean {
-    const forest = isForestBiome(biome);
-    const spacing =
-      biome === "old_forest" || biome === "dark_forest" ? 8 :
-      forest ? 10 :
-      biome === "bocage" ? 18 :
-      biome === "hills" ? 14 :
-      biome === "snow" || biome === "tundra" ? 16 :
-      biome === "plains" || biome === "flower_meadow" ? 28 :
-      isDryBiome(biome) || isMountainBiome(biome) ? 34 :
-      24;
-    const cellX = Math.floor(x / spacing);
-    const cellZ = Math.floor(z / spacing);
-    const jitterX = 1 + Math.floor(this.noise.random2D(cellX * 17 + 9, cellZ * 17 - 3) * Math.max(1, spacing - 2));
-    const jitterZ = 1 + Math.floor(this.noise.random2D(cellX * 23 - 5, cellZ * 23 + 11) * Math.max(1, spacing - 2));
-    if (x !== cellX * spacing + jitterX || z !== cellZ * spacing + jitterZ) return false;
+  constructor(private readonly noise: Noise) {
+    this.forestPatches = new ForestPatchPlanner(noise);
+  }
 
-    const grove = normalized(this.noise.fbm2D(x * 0.016 + 120, z * 0.016 - 80, 3));
-    const clearing = normalized(this.noise.fbm2D(x * 0.007 - 240, z * 0.007 + 160, 3));
-    let chance = 0;
-    if (biome === "old_forest" || biome === "dark_forest") chance = 0.42 + grove * grove * 0.46;
-    else if (forest) chance = 0.22 + grove * grove * 0.42;
-    else if (biome === "bocage") chance = grove > 0.58 ? 0.18 : 0.045;
-    else if (biome === "plains" || biome === "flower_meadow") chance = grove > 0.8 ? 0.12 : 0.012;
-    else if (biome === "hills") chance = 0.12 + grove * 0.22;
-    else if (biome === "snow" || biome === "tundra") chance = 0.16 + grove * 0.16;
-    else if (isDryBiome(biome) || isMountainBiome(biome)) chance = grove > 0.86 ? 0.025 : 0;
-    chance *= clearing > 0.76 ? 0.22 : 1;
-    return chance > 0 && this.noise.random2D(cellX * 91 + 41, cellZ * 91 - 17) < chance;
+  shouldPlaceTree(x: number, z: number, biome: BiomeId, height = 64): boolean {
+    return this.forestPatches.isTreeAnchor(x, z, biome, height);
   }
 
   shouldPlaceFallenLog(x: number, z: number, biome: BiomeId): boolean {

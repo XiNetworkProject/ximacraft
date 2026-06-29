@@ -19,6 +19,7 @@ import { SurfaceWeatherState } from "../src/weather/ground/SurfaceWeatherState";
 import { GroundAccumulationSystem } from "../src/weather/ground/GroundAccumulationSystem";
 import { VisibilityController } from "../src/weather/visibility/VisibilityController";
 import { TerrainGenerator } from "../src/world/TerrainGenerator";
+import { isForestBiome } from "../src/world/BiomeGenerator";
 import { BlockId } from "../src/world/BlockTypes";
 import { Chunk } from "../src/world/Chunk";
 import { SEA_LEVEL } from "../src/utils/Constants";
@@ -482,6 +483,96 @@ console.log("\n[world] region planner and block geometry are deterministic");
   check("stair geometry is built from multiple boxes, not a full cube", stair.length >= 2);
   check("connected fence geometry adds two rails only toward connections", fence.length === 5);
   check("terrain path geometry is full height to avoid blue ground holes", path.length === 1 && path[0].maxY === 1);
+}
+
+// ============================================================================
+console.log("\n[world] macro-biomes, forest patches and bridgeable roads are coherent");
+{
+  const gen = new TerrainGenerator("macro-biome-coherence-test");
+  const primaries: string[] = [];
+  let transitionInRange = true;
+  for (let x = -2048; x <= 2048; x += 64) {
+    const z = 384;
+    const h = gen.getHeight(x, z);
+    const hydro = gen.macro.sample(x, z).hydrology;
+    const biome = gen.biomes.sample(x, z, h, hydro);
+    primaries.push(biome.primary ?? biome.id);
+    transitionInRange &&= (biome.transition ?? 0) >= 64 && (biome.transition ?? 0) <= 256;
+  }
+  let primaryChanges = 0;
+  for (let i = 1; i < primaries.length; i += 1) {
+    if (primaries[i] !== primaries[i - 1]) primaryChanges += 1;
+  }
+  check("macro-biome primary identity changes slowly across several kilometers", primaryChanges < primaries.length * 0.38, `changes=${primaryChanges}/${primaries.length}`);
+  check("biome transitions stay in the requested 64-256m range", transitionInRange);
+
+  let forestAnchor: { x: number; z: number; biome: string } | null = null;
+  let plainAnchor: { x: number; z: number; biome: string } | null = null;
+  for (let z = -2048; z <= 2048; z += 32) {
+    for (let x = -2048; x <= 2048; x += 32) {
+      const h = gen.getHeight(x, z);
+      const hydro = gen.macro.sample(x, z).hydrology;
+      const biome = gen.biomes.sample(x, z, h, hydro).id;
+      if (!forestAnchor && isForestBiome(biome)) forestAnchor = { x, z, biome };
+      if (!plainAnchor && (biome === "plains" || biome === "dry_prairie" || biome === "flower_meadow")) plainAnchor = { x, z, biome };
+    }
+  }
+
+  function treeAnchorsAround(anchor: { x: number; z: number; biome: string } | null): number {
+    if (!anchor) return 0;
+    let count = 0;
+    for (let z = anchor.z - 128; z <= anchor.z + 128; z += 1) {
+      for (let x = anchor.x - 128; x <= anchor.x + 128; x += 1) {
+        const h = gen.getHeight(x, z);
+        const hydro = gen.macro.sample(x, z).hydrology;
+        const biome = gen.biomes.sample(x, z, h, hydro).id;
+        if (biome !== anchor.biome) continue;
+        if (gen.structures.shouldPlaceTree(x, z, biome, h)) count += 1;
+      }
+    }
+    return count;
+  }
+
+  const forestTrees = treeAnchorsAround(forestAnchor);
+  const plainTrees = treeAnchorsAround(plainAnchor);
+  check("forest patches produce many more tree anchors than open plains", forestTrees > Math.max(24, plainTrees * 3), `forest=${forestTrees} plains=${plainTrees} forestBiome=${forestAnchor?.biome} plainBiome=${plainAnchor?.biome}`);
+  check("plains stay open instead of becoming a uniform tree carpet", plainTrees < 35, `plainTrees=${plainTrees}`);
+
+  let riverCoherent = false;
+  for (let z = -2048; z <= 2048 && !riverCoherent; z += 32) {
+    for (let x = -2048; x <= 2048 && !riverCoherent; x += 32) {
+      const h = gen.getHeight(x, z);
+      const hydro = gen.macro.sample(x, z).hydrology;
+      if (Math.max(hydro.river, hydro.stream) < 0.62) continue;
+      let neighboringWatercourse = 0;
+      for (const [dx, dz] of [[16, 0], [-16, 0], [0, 16], [0, -16]]) {
+        const nh = gen.getHeight(x + dx, z + dz);
+        const n = gen.macro.sample(x + dx, z + dz).hydrology;
+        if (Math.max(n.river, n.stream) > 0.24 || nh <= h + 2) neighboringWatercourse += 1;
+      }
+      riverCoherent = neighboringWatercourse >= 2;
+    }
+  }
+  check("river/stream samples have neighboring continuity across chunks", riverCoherent);
+
+  let sawSettlement = false;
+  let sawBridgeableRoad = false;
+  for (let z = -3072; z <= 3072; z += 32) {
+    for (let x = -3072; x <= 3072; x += 32) {
+      const h = gen.getHeight(x, z);
+      const hydro = gen.macro.sample(x, z).hydrology;
+      const biome = gen.biomes.sample(x, z, h, hydro).id;
+      const settlement = gen.regions.settlementAt(x, z, h, biome, (wx, wz) => gen.getHeight(wx, wz));
+      sawSettlement ||= !!settlement && settlement.radius > 48;
+      const road = gen.regions.roadStrengthAt(x, z, h, biome, (wx, wz) => gen.getHeight(wx, wz));
+      if (road > 0.78) {
+        const bridge = gen.regions.sampleColumn(x, z, h, biome, (wx, wz) => gen.getHeight(wx, wz), 0.7);
+        sawBridgeableRoad ||= bridge.blocks.some((b) => b.block === BlockId.OAK_SLAB || b.block === BlockId.WEATHERED_BEAM);
+      }
+    }
+  }
+  check("region planner can produce multi-chunk settlements", sawSettlement);
+  check("road planner materializes bridge deck blocks when crossing water", sawBridgeableRoad);
 }
 
 // ============================================================================

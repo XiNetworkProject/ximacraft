@@ -23,6 +23,7 @@ import { WildlifeSpecies } from "../living/LivingWorldTypes";
 import { EnvironmentDirector } from "../environment/EnvironmentDirector";
 import { CHUNK_SIZE, WORLD_HEIGHT } from "../utils/Constants";
 import { BlockId, isLegacyTrack, isPlant } from "./BlockTypes";
+import { BiomeId, isForestBiome, isMountainBiome } from "./BiomeGenerator";
 
 export type CommandContext = {
   time: Time;
@@ -147,6 +148,10 @@ export const COMMANDS: CommandDefinition[] = [
   { usage: "/world cleanup generated-tracks", prefix: "/world cleanup generated-tracks", description: "Remove legacy generated track blocks from loaded chunks and saves." },
   { usage: "/world regenerate-decoration", prefix: "/world regenerate-decoration", description: "Clean legacy tracks and regenerate loaded chunk decoration." },
   { usage: "/world debug decorations", prefix: "/world debug decorations", description: "Inspect plants, legacy tracks and natural decorations in loaded chunks." },
+  { usage: "/world biome debug", prefix: "/world biome debug", description: "Inspect macro climate, local biome and micro-biome at the player." },
+  { usage: "/world biome map", prefix: "/world biome map", description: "Print a compact biome map around the player." },
+  { usage: "/world biome locate forest|village|river|mountain", prefix: "/world biome locate", description: "Locate the nearest broad biome/feature from the real generator." },
+  { usage: "/world biome regenerate", prefix: "/world biome regenerate", description: "Regenerate loaded chunks with the current climate/biome decorators." },
   { usage: "/build debug palette", prefix: "/build debug palette", description: "Place a compact palette of new non-cube block shapes." },
   { usage: "/build debug stairs", prefix: "/build debug stairs", description: "Place oriented stair variants." },
   { usage: "/build debug fences", prefix: "/build debug fences", description: "Place auto-connected fence variants." },
@@ -619,6 +624,10 @@ export class CommandSystem {
   }
 
   private executeWorld(parts: string[]): void {
+    if (parts[1] === "biome") {
+      this.executeWorldBiome(parts);
+      return;
+    }
     if (parts[1] === "regen" && (parts[2] === "loaded" || !parts[2])) {
       const count = this.context!.world.regenerateLoadedChunks();
       this.write(`Regenerated ${count} loaded chunk(s).`);
@@ -639,7 +648,91 @@ export class CommandSystem {
       this.write(this.debugDecorationSummary());
       return;
     }
-    this.write("Usage: /world regen loaded | /world cleanup generated-tracks | /world regenerate-decoration | /world debug decorations");
+    this.write("Usage: /world regen loaded | /world biome debug|map|locate|regenerate | /world cleanup generated-tracks | /world regenerate-decoration | /world debug decorations");
+  }
+
+  private executeWorldBiome(parts: string[]): void {
+    const world = this.context!.world;
+    const player = this.context!.player.position;
+    const x = Math.floor(player.x);
+    const z = Math.floor(player.z);
+    if (parts[2] === "debug" || !parts[2]) {
+      const height = world.getSurfaceHeight(x, z);
+      const hydro = world.terrain.macro.sample(x, z).hydrology;
+      this.write(world.terrain.biomes.debugAt(x, z, height, hydro));
+      return;
+    }
+    if (parts[2] === "map") {
+      this.write(this.biomeMap(x, z));
+      return;
+    }
+    if (parts[2] === "locate") {
+      const target = parts[3] ?? "forest";
+      this.write(this.locateBiomeFeature(x, z, target));
+      return;
+    }
+    if (parts[2] === "regenerate") {
+      const count = world.regenerateLoadedChunks();
+      this.write(`Regenerated ${count} loaded chunk(s) using the current climate/biome planners.`);
+      return;
+    }
+    this.write("Usage: /world biome debug|map|locate forest|village|river|mountain|regenerate");
+  }
+
+  private biomeMap(centerX: number, centerZ: number): string {
+    const world = this.context!.world;
+    const step = 64;
+    const radius = 4;
+    const rows: string[] = [];
+    const legend = new Map<string, string>();
+    for (let gz = -radius; gz <= radius; gz += 1) {
+      let row = "";
+      for (let gx = -radius; gx <= radius; gx += 1) {
+        const x = centerX + gx * step;
+        const z = centerZ + gz * step;
+        const h = world.getSurfaceHeight(x, z);
+        const hydro = world.terrain.macro.sample(x, z).hydrology;
+        const biome = world.terrain.biomes.sample(x, z, h, hydro).id;
+        const char = biomeGlyph(biome);
+        row += gx === 0 && gz === 0 ? "@" : char;
+        legend.set(char, biome);
+      }
+      rows.push(row);
+    }
+    const legendText = [...legend.entries()].map(([k, v]) => `${k}=${v}`).join(" ");
+    return `Biome map step=${step}m center=${centerX},${centerZ}\n${rows.join("\n")}\n${legendText}`;
+  }
+
+  private locateBiomeFeature(centerX: number, centerZ: number, target: string): string {
+    const world = this.context!.world;
+    const maxRadius = 4096;
+    const step = 64;
+    let best: { x: number; z: number; distance: number; label: string } | null = null;
+    for (let radius = step; radius <= maxRadius; radius += step) {
+      for (let z = centerZ - radius; z <= centerZ + radius; z += step) {
+        for (let x = centerX - radius; x <= centerX + radius; x += step) {
+          if (Math.abs(x - centerX) !== radius && Math.abs(z - centerZ) !== radius) continue;
+          const height = world.getSurfaceHeight(x, z);
+          const macro = world.terrain.macro.sample(x, z);
+          const biome = world.terrain.biomes.sample(x, z, height, macro.hydrology).id;
+          const settlement = world.terrain.regions.settlementAt(x, z, height, biome, (wx, wz) => world.getSurfaceHeight(wx, wz));
+          const matches =
+            (target === "forest" && isForestBiome(biome)) ||
+            (target === "mountain" && isMountainBiome(biome)) ||
+            (target === "river" && Math.max(macro.hydrology.river, macro.hydrology.stream) > 0.58) ||
+            (target === "village" && settlement?.kind === "village");
+          if (!matches) continue;
+          const distance = Math.hypot(x - centerX, z - centerZ);
+          best = { x, z, distance, label: target === "village" && settlement ? settlement.kind : biome };
+          break;
+        }
+        if (best) break;
+      }
+      if (best) break;
+    }
+    return best
+      ? `${target} found at x=${best.x} z=${best.z} distance=${best.distance.toFixed(0)} label=${best.label}`
+      : `${target} not found within ${maxRadius} blocks.`;
   }
 
   private executeBuild(parts: string[]): void {
@@ -1027,4 +1120,19 @@ export class CommandSystem {
     event.stopPropagation();
     event.stopImmediatePropagation();
   }
+}
+
+function biomeGlyph(biome: BiomeId): string {
+  if (isForestBiome(biome)) return "F";
+  if (isMountainBiome(biome)) return "M";
+  if (biome === "riverbank") return "R";
+  if (biome === "lake" || biome === "mountain_lake") return "L";
+  if (biome === "marsh" || biome === "bog") return "W";
+  if (biome === "beach" || biome === "dunes") return "B";
+  if (biome === "desert" || biome === "rocky_desert" || biome === "canyon") return "D";
+  if (biome === "tundra" || biome === "snow" || biome === "glacial_valley") return "S";
+  if (biome === "flower_meadow") return "*";
+  if (biome === "bocage") return "H";
+  if (biome === "hills" || biome === "plateau") return "h";
+  return ".";
 }

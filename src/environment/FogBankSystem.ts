@@ -12,6 +12,15 @@ interface FogBank {
   kind: FogBankKind;
 }
 
+export interface FogBankRenderSample {
+  id: string;
+  x: number;
+  z: number;
+  radius: number;
+  density: number;
+  kind: FogBankKind;
+}
+
 export interface FogBankUpdateInput {
   seed: string;
   playerX: number;
@@ -62,6 +71,23 @@ export class FogBankSystem {
       .join(" | ");
     return `FogBanks count=${this.banks.size}${list ? ` ${list}` : ""}`;
   }
+
+  renderSamples(observerX: number, observerZ: number, maxDistance = 2200): FogBankRenderSample[] {
+    const maxDistanceSq = maxDistance * maxDistance;
+    return [...this.banks.entries()]
+      .filter(([, bank]) => bank.density > 0.04 && distanceSq(bank.x, bank.z, observerX, observerZ) <= maxDistanceSq)
+      .sort(([, a], [, b]) => distanceSq(a.x, a.z, observerX, observerZ) - distanceSq(b.x, b.z, observerX, observerZ))
+      .slice(0, 18)
+      .map(([id, bank]) => ({
+        id,
+        x: bank.x,
+        z: bank.z,
+        radius: bank.radius,
+        density: bank.density,
+        kind: bank.kind,
+      }));
+  }
+
 
   clear(): void {
     this.banks.clear();
@@ -128,4 +154,10 @@ export class FogBankSystem {
 function smoothstep(edge0: number, edge1: number, x: number): number {
   const t = clamp((x - edge0) / Math.max(0.0001, edge1 - edge0), 0, 1);
   return t * t * (3 - 2 * t);
+}
+
+function distanceSq(ax: number, az: number, bx: number, bz: number): number {
+  const dx = ax - bx;
+  const dz = az - bz;
+  return dx * dx + dz * dz;
 }

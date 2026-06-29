@@ -52,7 +52,7 @@ export class TerrainGenerator {
         const macro = this.macro.sample(x, z);
         const height = macro.altitude;
         const hydro = macro.hydrology;
-        const biome = this.biomes.sample(x, z, height);
+        const biome = this.biomes.sample(x, z, height, hydro);
         const index = lz * CHUNK_SIZE + lx;
         heights[index] = height;
         biomes[index] = biome.id;
@@ -88,7 +88,11 @@ export class TerrainGenerator {
         const z = chunk.cz * CHUNK_SIZE + lz;
         const height = heights[index];
         const biomeId = biomes[index];
-        const region = height > SEA_LEVEL + 2 ? this.regions.sampleColumn(x, z, height, biomeId, (wx, wz) => this.getHeight(wx, wz)) : null;
+        const macro = this.macro.sample(x, z);
+        const hydro = macro.hydrology;
+        const region = height > SEA_LEVEL + 2
+          ? this.regions.sampleColumn(x, z, height, biomeId, (wx, wz) => this.getHeight(wx, wz), Math.max(hydro.river, hydro.stream * 0.7, hydro.lake * 0.6))
+          : null;
         if (region?.surface) {
           chunk.setLocal(lx, height, lz, region.surface);
         }
@@ -111,7 +115,7 @@ export class TerrainGenerator {
         const treePlaced =
           height > SEA_LEVEL + 2 &&
           (isForestBiome(biomeId) || biomeId === "plains" || biomeId === "bocage" || biomeId === "hills" || biomeId === "snow" || biomeId === "tundra") &&
-          this.structures.shouldPlaceTree(x, z, biomeId);
+          this.structures.shouldPlaceTree(x, z, biomeId, height);
         if (treePlaced) {
           this.structures.placeTree(chunk, lx, height, lz, biomeId);
         } else if (height > SEA_LEVEL + 2 && this.structures.shouldPlaceFallenLog(x, z, biomeId)) {

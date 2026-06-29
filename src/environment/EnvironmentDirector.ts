@@ -8,6 +8,7 @@ import { World } from "../world/World";
 import { BlockId } from "../world/BlockTypes";
 import { EnvironmentState } from "./EnvironmentState";
 import { FogBankSystem } from "./FogBankSystem";
+import type { FogBankRenderSample } from "./FogBankSystem";
 import { SurfaceConditionSystem } from "./SurfaceConditionSystem";
 import { ThermalComfortSystem } from "./ThermalComfortSystem";
 import { WorldPhenologySystem } from "./WorldPhenologySystem";
@@ -200,6 +201,63 @@ export class EnvironmentDirector {
 
   fogDebugText(): string {
     return this.fogBanks.debug();
+  }
+
+  fogRenderSamples(observerX: number, observerZ: number, maxDistance?: number): FogBankRenderSample[] {
+    return this.fogBanks.renderSamples(observerX, observerZ, maxDistance);
+  }
+
+  sampleAt(world: World, x: number, y: number, z: number, ticks = 0, dayFactor = 1): EnvironmentState {
+    const rawSample = this.weather.sampleAt(x, z);
+    const sample = this.applyForces(rawSample);
+    const season = this.seasons.sample(ticks);
+    const biome = world.getBiomeAt(x, z);
+    const temperature = sample.temperature + season.temperatureOffset * 0.45 - Math.max(0, y - 72) * 0.0065;
+    const adjustedSample: WeatherSample = { ...sample, temperature };
+    const dewPoint = dewPointC(temperature, sample.humidity);
+    const surface = this.surface.resolve({
+      x,
+      z,
+      weather: adjustedSample,
+      dewPoint,
+      dayFactor,
+      exposedToSky: 1,
+      surfaceState: new SurfaceWeatherState((wx, wz) => world.getSurfaceHeight(wx, wz)),
+    });
+    const sunExposure = clamp(dayFactor * (1 - sample.cloudCover * 0.82), 0, 1);
+    const fog = this.fogBanks.renderSamples(x, z, 900).length > 0
+      ? { density: Math.min(0.82, sample.humidity * 0.45), visibilityMeters: Math.round(1800 - sample.humidity * 700), bankDensity: sample.humidity * 0.45, nearestBankDistance: 0, kind: "advection" as const }
+      : { density: clamp((sample.humidity - 0.82) * 1.35 + sample.precipitation * 0.32, 0, 0.42), visibilityMeters: Math.round(1800 - clamp((sample.humidity - 0.82) * 1.35 + sample.precipitation * 0.32, 0, 0.42) * 1650), bankDensity: 0, nearestBankDistance: -1, kind: "none" as const };
+    return {
+      season,
+      dayOfSeason: Math.floor(season.progress * 24),
+      weather: adjustedSample,
+      timeOfDay: 0,
+      hour: 0,
+      dayFactor,
+      altitude: y,
+      biomeId: biome.id,
+      temperature,
+      humidity: sample.humidity,
+      pressure: sample.pressure,
+      dewPoint,
+      windSpeed: sample.windSpeed,
+      windDirectionDegrees: windDirectionDegrees(sample.windX, sample.windZ),
+      gustSpeed: sample.windSpeed * (1.15 + sample.thunderRisk * 0.55 + sample.precipitation * 0.22),
+      cloudCover: sample.cloudCover,
+      precipitation: sample.precipitation,
+      weatherType: sample.weatherType,
+      precipitationKind: this.precipitationKind(adjustedSample),
+      thunderRisk: sample.thunderRisk,
+      sunExposure,
+      riverLevel: this.riverLevel(this.waterPresence(world, x, z), season.season, surface.wetness, sample.precipitation),
+      fauna: this.faunaState(season, adjustedSample, 0, surface),
+      airQuality: this.airQuality(adjustedSample, sunExposure, fog.density),
+      surface,
+      thermal: this.thermal.resolve({ temperature, humidity: sample.humidity, windSpeed: sample.windSpeed, sunExposure, precipitation: sample.precipitation }),
+      fog,
+      visual: this.phenology.resolve(season, surface, temperature, sample.humidity, dayFactor),
+    };
   }
 
   private applyForces(sample: WeatherSample): WeatherSample {

@@ -96,7 +96,7 @@ export class World {
 
   getBiomeAt(x: number, z: number) {
     const height = this.getSurfaceHeight(x, z);
-    return this.terrain.biomes.sample(x, z, height);
+    return this.terrain.biomes.sample(x, z, height, this.terrain.macro.sample(x, z).hydrology);
   }
 
   getSpawnPosition(): THREE.Vector3 {
