@@ -1,34 +1,42 @@
+import type { GameSettingsSnapshot, QualityPreset } from "../game/Settings";
 import { WorldSummary } from "../world/SaveManager";
 import { MainMenuBackground } from "./MainMenuBackground";
+import { CreditsPage } from "./menu/CreditsPage";
+import { MainMenuHome } from "./menu/MainMenuHome";
+import { MenuRouter } from "./menu/MenuRouter";
+import { MainMenuNewWorldOptions, WorldCreationPage } from "./menu/WorldCreationPage";
+import { LoadingStepId, WorldLoadingPage } from "./menu/WorldLoadingPage";
+import { SettingsPage } from "./menu/SettingsPage";
+import { WorldSelectPage } from "./menu/WorldSelectPage";
 
-export type MainMenuNewWorldOptions = {
-  name: string;
-  seed?: string;
-};
+export type { MainMenuNewWorldOptions } from "./menu/WorldCreationPage";
 
 const MENU_TIPS = [
-  "Astuce — appuie sur T ou / pour ouvrir la console de commandes.",
-  "Astuce — la météo est régionale : elle se forme, se déplace et se dissipe.",
-  "Astuce — F3 affiche le débogage, M ouvre la carte radar.",
-  "Astuce — nage avec Espace pour remonter, Maj pour plonger.",
-  "Astuce — après une averse au soleil bas, guette l'arc-en-ciel.",
-  "Astuce — explore loin : les biomes changent sur de longues distances.",
+  "Astuce - T ou / ouvre la console de commandes.",
+  "Astuce - la meteo est regionale : observe ce qui arrive au loin.",
+  "Astuce - M ouvre la carte radar meteo.",
+  "Astuce - les routes et villages sont determines par la seed.",
+  "Astuce - apres la pluie, le sol garde une memoire humide.",
+  "Astuce - Escape revient a la page precedente dans les menus.",
 ];
 
 export class MainMenu {
   readonly root: HTMLDivElement;
-  readonly continueButton: HTMLButtonElement;
-  private readonly worldList: HTMLDivElement;
-  private readonly nameInput: HTMLInputElement;
-  private readonly seedInput: HTMLInputElement;
-  private readonly qualitySelect: HTMLSelectElement;
-  private readonly renderDistanceInput: HTMLInputElement;
   private readonly background = new MainMenuBackground();
-  private readonly tipElement: HTMLParagraphElement;
+  private readonly router = new MenuRouter();
+  private readonly content = document.createElement("div");
+  private readonly home: MainMenuHome;
+  private readonly worldsPage: WorldSelectPage;
+  private readonly createPage: WorldCreationPage;
+  private readonly loadingPage = new WorldLoadingPage();
+  private readonly settingsPage: SettingsPage;
+  private readonly creditsPage: CreditsPage;
+  private readonly tipElement = document.createElement("p");
+  private worlds: WorldSummary[] = [];
   private tipTimer = 0;
   private tipIndex = 0;
-  private selectedWorldId: string | null = null;
-  private worlds: WorldSummary[] = [];
+  private pauseReturn = false;
+  private settings: GameSettingsSnapshot;
 
   constructor(
     overlay: HTMLElement,
@@ -36,98 +44,169 @@ export class MainMenu {
       newGame: (options: MainMenuNewWorldOptions) => void;
       loadWorld: (worldId: string) => void;
       deleteWorld: (worldId: string) => void;
+      renameWorld: (worldId: string, name: string) => void;
+      duplicateWorld: (worldId: string) => void;
       save: () => void;
       openCommands: () => void;
-      setQuality: (quality: "low" | "balanced" | "high") => void;
+      refreshWorlds: () => void;
+      setQuality: (quality: QualityPreset) => void;
       setRenderDistance: (distance: number) => void;
+      applySettings: (settings: GameSettingsSnapshot) => GameSettingsSnapshot;
+      resetSettings: () => GameSettingsSnapshot;
+      showPause: () => void;
     },
+    initialSettings: GameSettingsSnapshot,
   ) {
+    this.settings = initialSettings;
     this.root = document.createElement("div");
     this.root.className = "main-menu-shell";
-    this.root.innerHTML = `
-      <section class="main-menu-hero">
-        <div>
-          <h1>XimaCraft</h1>
-          <p>Survie creative locale, meteo regionale, carte radar et construction voxel.</p>
-        </div>
-        <div class="main-menu-actions"></div>
-      </section>
-      <section class="main-menu-worlds">
-        <header><h2>Mondes</h2><button class="ui-button secondary menu-refresh" type="button">Actualiser</button></header>
-        <div class="world-list"></div>
-      </section>
-      <section class="main-menu-create">
-        <h2>Nouveau monde</h2>
-        <label>Nom<input class="world-name-input" maxlength="48" placeholder="Mon monde" /></label>
-        <label>Seed<input class="world-seed-input" maxlength="96" placeholder="auto" /></label>
-        <button class="ui-button create-world" type="button">Creer</button>
-      </section>
-      <section class="main-menu-settings">
-        <h2>Reglages</h2>
-        <label>Qualite<select class="quality-select"><option value="balanced">Equilibre</option><option value="high">Elevee</option><option value="low">Legere</option></select></label>
-        <label>Chunks<input class="render-distance-input" type="range" min="2" max="16" value="6" /><span class="render-distance-label">6</span></label>
-      </section>
-    `;
+    this.content.className = "menu-route-stack";
 
-    this.worldList = this.root.querySelector(".world-list")!;
-    this.nameInput = this.root.querySelector(".world-name-input")!;
-    this.seedInput = this.root.querySelector(".world-seed-input")!;
-    this.qualitySelect = this.root.querySelector(".quality-select")!;
-    this.renderDistanceInput = this.root.querySelector(".render-distance-input")!;
-
-    const actions = this.root.querySelector(".main-menu-actions")!;
-    this.continueButton = this.button("Continuer", () => {
-      if (this.selectedWorldId) this.callbacks.loadWorld(this.selectedWorldId);
+    this.home = new MainMenuHome({
+      continueWorld: (worldId) => this.openLoadingForWorld(worldId),
+      openWorlds: () => this.router.navigate("worlds"),
+      openSettings: () => this.router.navigate("settings"),
+      openCredits: () => this.router.navigate("credits"),
     });
-    this.continueButton.disabled = true;
-    actions.append(
-      this.continueButton,
-      this.button("Commandes", callbacks.openCommands, "secondary"),
-      this.button("Sauver monde actif", callbacks.save, "secondary"),
-    );
-
-    this.root.querySelector<HTMLButtonElement>(".create-world")!.addEventListener("click", () => this.createWorld());
-    this.root.querySelector<HTMLButtonElement>(".menu-refresh")!.addEventListener("click", () => this.renderWorlds(this.worlds));
-    this.qualitySelect.addEventListener("change", () => {
-      this.callbacks.setQuality(this.qualitySelect.value as "low" | "balanced" | "high");
+    this.worldsPage = new WorldSelectPage({
+      back: () => this.back(),
+      createWorld: () => this.router.navigate("create"),
+      play: (worldId) => this.openLoadingForWorld(worldId),
+      rename: (worldId, name) => this.callbacks.renameWorld(worldId, name),
+      duplicate: (worldId) => this.callbacks.duplicateWorld(worldId),
+      delete: (worldId) => this.callbacks.deleteWorld(worldId),
+      refresh: () => this.callbacks.refreshWorlds(),
     });
-    this.renderDistanceInput.addEventListener("input", () => {
-      const value = Number(this.renderDistanceInput.value);
-      this.root.querySelector(".render-distance-label")!.textContent = `${value}`;
-      this.callbacks.setRenderDistance(value);
+    this.createPage = new WorldCreationPage({
+      back: () => this.back(),
+      create: (options) => {
+        this.showLoading(options.name, options.seed ?? "auto");
+        this.callbacks.newGame(options);
+      },
     });
+    this.settingsPage = new SettingsPage(this.settings, {
+      back: () => this.back(),
+      apply: (settings) => {
+        this.settings = this.callbacks.applySettings(settings);
+      },
+      reset: () => this.callbacks.resetSettings(),
+    });
+    this.creditsPage = new CreditsPage({ back: () => this.back() });
 
-    // Fond animé derrière les panneaux.
+    for (const page of [this.home, this.worldsPage, this.createPage, this.loadingPage, this.settingsPage, this.creditsPage]) {
+      this.router.register(page);
+      this.content.appendChild(page.element);
+    }
+
     this.background.canvas.classList.add("main-menu-bg");
-    this.root.prepend(this.background.canvas);
-
-    // Pied de page : version + astuce rotative.
-    const footer = document.createElement("footer");
-    footer.className = "main-menu-footer";
-    const version = document.createElement("span");
-    version.className = "menu-version";
-    version.textContent = "XimaCraft · v0.1";
-    this.tipElement = document.createElement("p");
-    this.tipElement.className = "menu-tip";
-    this.tipElement.textContent = MENU_TIPS[0];
-    footer.append(version, this.tipElement);
-    this.root.appendChild(footer);
-
+    this.root.append(this.background.canvas, this.content, this.footer());
     overlay.appendChild(this.root);
+    this.root.addEventListener("keydown", this.onKeyDown, true);
+    this.router.navigate("home", true);
     this.background.start();
     this.startTips();
   }
 
   show(): void {
+    this.pauseReturn = false;
     this.root.classList.remove("hidden");
     this.background.start();
     this.startTips();
+    this.router.clearHistory();
+    this.router.navigate("home", true);
+    this.router.focusPrimary();
+  }
+
+  showSettingsFromPause(): void {
+    this.pauseReturn = true;
+    this.root.classList.remove("hidden");
+    this.background.start();
+    this.startTips();
+    this.router.clearHistory();
+    this.router.navigate("settings", true);
+  }
+
+  showWorldsFromPause(): void {
+    this.pauseReturn = false;
+    this.root.classList.remove("hidden");
+    this.background.start();
+    this.startTips();
+    this.router.clearHistory();
+    this.router.navigate("worlds", true);
   }
 
   hide(): void {
     this.root.classList.add("hidden");
     this.background.stop();
     this.stopTips();
+  }
+
+  isOpen(): boolean {
+    return !this.root.classList.contains("hidden");
+  }
+
+  renderWorlds(worlds: WorldSummary[]): void {
+    this.worlds = worlds;
+    this.home.setWorlds(worlds);
+    this.worldsPage.setWorlds(worlds);
+  }
+
+  setSettings(quality: QualityPreset, renderDistance: number): void {
+    this.settings = { ...this.settings, quality, renderDistance };
+    this.settingsPage.setSettings(this.settings);
+  }
+
+  setSettingsSnapshot(settings: GameSettingsSnapshot): void {
+    this.settings = settings;
+    this.settingsPage.setSettings(settings);
+  }
+
+  showLoading(worldName: string, seed: string): void {
+    this.root.classList.remove("hidden");
+    this.background.start();
+    this.loadingPage.reset(worldName, seed);
+    this.router.navigate("loading", true);
+  }
+
+  setLoadingProgress(step: LoadingStepId, progress: number): void {
+    this.loadingPage.setProgress(step, progress);
+  }
+
+  completeLoading(): void {
+    this.loadingPage.complete();
+  }
+
+  failLoading(message: string): void {
+    this.loadingPage.fail(message);
+  }
+
+  private openLoadingForWorld(worldId: string): void {
+    const world = this.worlds.find((item) => item.id === worldId);
+    this.showLoading(world?.name ?? "Monde", world?.seed ?? "seed inconnue");
+    this.callbacks.loadWorld(worldId);
+  }
+
+  private back(): void {
+    if (this.router.current === "loading") return;
+    if (this.pauseReturn && this.router.current === "settings") {
+      this.pauseReturn = false;
+      this.hide();
+      this.callbacks.showPause();
+      return;
+    }
+    this.router.back("home");
+  }
+
+  private footer(): HTMLElement {
+    const footer = document.createElement("footer");
+    footer.className = "main-menu-footer";
+    const version = document.createElement("span");
+    version.className = "menu-version";
+    version.textContent = "XimaCraft - v0.1";
+    this.tipElement.className = "menu-tip";
+    this.tipElement.textContent = MENU_TIPS[0];
+    footer.append(version, this.tipElement);
+    return footer;
   }
 
   private startTips(): void {
@@ -138,79 +217,27 @@ export class MainMenu {
       window.setTimeout(() => {
         this.tipElement.textContent = MENU_TIPS[this.tipIndex];
         this.tipElement.classList.remove("fading");
-      }, 320);
+      }, 220);
     }, 6500);
   }
 
   private stopTips(): void {
-    if (this.tipTimer) {
-      clearInterval(this.tipTimer);
-      this.tipTimer = 0;
-    }
+    if (!this.tipTimer) return;
+    clearInterval(this.tipTimer);
+    this.tipTimer = 0;
   }
 
-  renderWorlds(worlds: WorldSummary[], selectedWorldId = this.selectedWorldId): void {
-    this.worlds = worlds;
-    const selectedExists = selectedWorldId && worlds.some((world) => world.id === selectedWorldId);
-    this.selectedWorldId = selectedExists ? selectedWorldId : worlds[0]?.id ?? null;
-    this.continueButton.disabled = !this.selectedWorldId;
-    this.worldList.textContent = "";
-    if (worlds.length === 0) {
-      const empty = document.createElement("p");
-      empty.className = "world-empty";
-      empty.textContent = "Aucun monde sauvegarde.";
-      this.worldList.appendChild(empty);
+  private readonly onKeyDown = (event: KeyboardEvent): void => {
+    if (this.root.classList.contains("hidden")) return;
+    if (event.code === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      this.back();
       return;
     }
-    for (const world of worlds) {
-      const row = document.createElement("div");
-      row.className = `world-row${world.id === this.selectedWorldId ? " selected" : ""}`;
-      row.tabIndex = 0;
-      row.setAttribute("role", "button");
-      const date = new Date(world.lastPlayedAt).toLocaleString();
-      row.innerHTML = `
-        <span><strong>${world.name}</strong><small>${world.seed}</small></span>
-        <small>${date}</small>
-      `;
-      row.addEventListener("click", () => {
-        this.selectedWorldId = world.id;
-        this.renderWorlds(this.worlds, world.id);
-      });
-      row.addEventListener("dblclick", () => this.callbacks.loadWorld(world.id));
-      row.addEventListener("keydown", (event) => {
-        if (event.code === "Enter") this.callbacks.loadWorld(world.id);
-      });
-      const deleteButton = document.createElement("button");
-      deleteButton.className = "world-delete";
-      deleteButton.type = "button";
-      deleteButton.textContent = "Suppr.";
-      deleteButton.addEventListener("click", (event) => {
-        event.stopPropagation();
-        this.callbacks.deleteWorld(world.id);
-      });
-      row.appendChild(deleteButton);
-      this.worldList.appendChild(row);
+    if (event.code === "Enter" && event.target === this.root) {
+      const primary = this.root.querySelector<HTMLButtonElement>(".menu-page.active [data-primary='true']:not(:disabled)");
+      primary?.click();
     }
-  }
-
-  setSettings(quality: "low" | "balanced" | "high", renderDistance: number): void {
-    this.qualitySelect.value = quality;
-    this.renderDistanceInput.value = `${renderDistance}`;
-    this.root.querySelector(".render-distance-label")!.textContent = `${renderDistance}`;
-  }
-
-  private createWorld(): void {
-    const name = this.nameInput.value.trim() || `Monde ${this.worlds.length + 1}`;
-    const seed = this.seedInput.value.trim() || undefined;
-    this.callbacks.newGame({ name, seed });
-  }
-
-  private button(label: string, onClick: () => void, tone = ""): HTMLButtonElement {
-    const button = document.createElement("button");
-    button.className = `ui-button ${tone}`;
-    button.type = "button";
-    button.textContent = label;
-    button.addEventListener("click", onClick);
-    return button;
-  }
+  };
 }

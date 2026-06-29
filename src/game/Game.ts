@@ -62,12 +62,13 @@ import { HotbarUI } from "../ui/HotbarUI";
 import { HUD } from "../ui/HUD";
 import { InventoryUI } from "../ui/InventoryUI";
 import { MainMenu, MainMenuNewWorldOptions } from "../ui/MainMenu";
+import type { LoadingStepId } from "../ui/menu/WorldLoadingPage";
 import { PauseMenu } from "../ui/PauseMenu";
 import { QuickAccessUI } from "../ui/QuickAccessUI";
 import { CameraController } from "./CameraController";
 import { Input } from "./Input";
 import { Renderer } from "./Renderer";
-import { Settings } from "./Settings";
+import { DEFAULT_GAME_SETTINGS, GameSettingsSnapshot, GameSettingsStore, normalizeSettings, QualityPreset, Settings } from "./Settings";
 import { Time } from "./Time";
 
 type RaycastHit = {
@@ -77,7 +78,6 @@ type RaycastHit = {
   normal: THREE.Vector3;
 };
 
-type QualityPreset = "low" | "balanced" | "high";
 type StormCloudGroup = { core: CloudMass; feeders: CloudMass[] };
 const ALERT_FORECAST_HORIZONS = [0, 5 * 60, 15 * 60, 30 * 60];
 const STORM_PHASE_DEVELOPMENT: Record<WeatherEventPhase, number> = {
@@ -170,7 +170,9 @@ export class Game {
   private currentSeed = DEFAULT_SEED;
   private currentWorldId = "default";
   private currentWorldName = "Monde local";
+  private currentWorldOptions: SaveData["worldOptions"] = {};
   private knownWorlds: WorldSummary[] = [];
+  private menuSettings: GameSettingsSnapshot = GameSettingsStore.load();
   private lastTime = performance.now();
   private currentHit: RaycastHit | null = null;
   private assetsReady: Promise<void> | null = null;
@@ -188,6 +190,8 @@ export class Game {
   private lastEnvironmentVisualKey = "";
 
   constructor(container: HTMLElement) {
+    this.menuSettings = normalizeSettings(this.menuSettings);
+    GameSettingsStore.applyToRuntime(this.menuSettings);
     this.renderer = new Renderer(container);
     this.overlay = document.createElement("div");
     this.overlay.className = "overlay";
@@ -247,17 +251,25 @@ export class Game {
       newGame: (options) => void this.startNewGame(options),
       loadWorld: (worldId) => void this.loadGame(worldId),
       deleteWorld: (worldId) => void this.deleteWorld(worldId),
+      renameWorld: (worldId, name) => void this.renameWorld(worldId, name),
+      duplicateWorld: (worldId) => void this.duplicateWorld(worldId),
       save: () => void this.saveGame(),
       openCommands: () => this.command.openCommandTable(),
+      refreshWorlds: () => void this.refreshWorldList(),
       setQuality: (quality) => this.setQualityPreset(quality),
       setRenderDistance: (distance) => this.setRenderDistance(distance),
-    });
+      applySettings: (settings) => this.applyGameSettings(settings, false),
+      resetSettings: () => this.resetGameSettings(),
+      showPause: () => this.pauseMenu.show(),
+    }, this.menuSettings);
     this.pauseMenu = new PauseMenu(this.overlay, {
       resume: () => this.resume(),
       save: () => void this.saveGame(),
       openMap: () => this.openWeatherMap(),
       openInventory: () => this.openInventory(),
       openCommands: () => this.command.openCommandTable(),
+      openWorlds: () => this.openWorldsFromPause(),
+      openSettings: () => this.openSettingsFromPause(),
       mainMenu: () => this.showMainMenu(),
     });
     this.quickAccess = new QuickAccessUI(this.overlay, {
@@ -310,46 +322,87 @@ export class Game {
     );
     await this.refreshWorldList();
     this.mainMenu.setSettings(this.qualityPreset, Settings.renderDistance);
+    this.applyGameSettings(this.menuSettings);
     this.loop();
   }
 
-  private async startNewGame(options: MainMenuNewWorldOptions = { name: "Monde local" }): Promise<void> {
-    await this.waitForAssets();
-    void this.gameAudio.unlock();
-    void this.weatherAudio.unlock();
+  private async startNewGame(options: MainMenuNewWorldOptions = {
+    name: "Monde local",
+    gameMode: "creative",
+    difficulty: "normal",
+    startSeason: "auto",
+    startWeather: "clear",
+    startTime: "day",
+    dynamicWeather: true,
+    dynamicSeasons: true,
+    renderDistance: Settings.renderDistance,
+    quality: this.qualityPreset,
+    worldQuality: "standard",
+  }): Promise<void> {
     const seed = options.seed?.trim() || `${DEFAULT_SEED}-${Date.now().toString(36)}`;
-    this.currentWorldId = this.createWorldId(options.name);
-    this.currentWorldName = options.name.trim() || "Nouveau monde";
-    await this.saveManager.registerWorld(this.currentWorldId, this.currentWorldName, seed);
-    await this.setupWorld(seed);
-    this.mainMenu.hide();
-    this.pauseMenu.hide();
-    this.started = true;
-    this.quickAccess.setVisible(true);
-    await this.saveGame();
-    await this.refreshWorldList();
-    this.hud.message("Monde pret. Clique pour capturer la souris.");
+    this.mainMenu.showLoading(options.name, seed);
+    try {
+      this.loading("textures", 0.15);
+      await this.waitForAssets();
+      void this.gameAudio.unlock();
+      void this.weatherAudio.unlock();
+      this.loading("seed", 0.45);
+      this.currentWorldId = this.createWorldId(options.name);
+      this.currentWorldName = options.name.trim() || "Nouveau monde";
+      this.currentWorldOptions = {
+        difficulty: options.difficulty,
+        startSeason: options.startSeason,
+        dynamicWeather: options.dynamicWeather,
+        dynamicSeasons: options.dynamicSeasons,
+        worldQuality: options.worldQuality,
+      };
+      this.setQualityPreset(options.quality, false);
+      this.setRenderDistance(options.renderDistance, false);
+      await this.saveManager.registerWorld(this.currentWorldId, this.currentWorldName, seed);
+      this.loading("terrain", 0.2);
+      await this.setupWorld(seed, undefined, options);
+      this.loading("chunks", 0.05);
+      await this.warmInitialChunks((progress) => this.loading("chunks", progress));
+      this.loading("weather", 0.75);
+      await this.saveGame(false);
+      await this.refreshWorldList();
+      this.enterWorldFromMenu("Monde pret. Clique pour capturer la souris.");
+    } catch (error) {
+      this.mainMenu.failLoading(error instanceof Error ? error.message : "Le chargement du monde a echoue.");
+      this.hud.message("Creation du monde impossible.");
+    }
   }
 
   private async loadGame(worldId = this.currentWorldId): Promise<void> {
-    await this.waitForAssets();
-    void this.gameAudio.unlock();
-    void this.weatherAudio.unlock();
-    const data = await this.saveManager.load(worldId);
-    if (!data) {
-      this.hud.message("Aucun monde sauvegarde trouve.");
-      return;
-    }
     const summary = this.knownWorlds.find((world) => world.id === worldId);
-    this.currentWorldId = worldId;
-    this.currentWorldName = summary?.name ?? "Monde local";
-    await this.setupWorld(data.seed, data);
-    this.mainMenu.hide();
-    this.pauseMenu.hide();
-    this.started = true;
-    this.quickAccess.setVisible(true);
-    await this.refreshWorldList();
-    this.hud.message("Monde charge.");
+    this.mainMenu.showLoading(summary?.name ?? "Monde", summary?.seed ?? "seed inconnue");
+    try {
+      this.loading("textures", 0.15);
+      await this.waitForAssets();
+      void this.gameAudio.unlock();
+      void this.weatherAudio.unlock();
+      this.loading("seed", 0.35);
+      const data = await this.saveManager.load(worldId);
+      if (!data) {
+        this.mainMenu.failLoading("Aucun monde sauvegarde trouve.");
+        this.hud.message("Aucun monde sauvegarde trouve.");
+        return;
+      }
+      this.currentWorldId = worldId;
+      this.currentWorldName = summary?.name ?? "Monde local";
+      this.currentWorldOptions = data.worldOptions ?? {};
+      this.loading("terrain", 0.25);
+      await this.setupWorld(data.seed, data);
+      this.loading("chunks", 0.05);
+      await this.warmInitialChunks((progress) => this.loading("chunks", progress));
+      this.loading("weather", 0.85);
+      await this.saveManager.markPlayed(worldId);
+      await this.refreshWorldList();
+      this.enterWorldFromMenu("Monde charge.");
+    } catch (error) {
+      this.mainMenu.failLoading(error instanceof Error ? error.message : "Le chargement du monde a echoue.");
+      this.hud.message("Chargement impossible.");
+    }
   }
 
   private async waitForAssets(): Promise<void> {
@@ -361,16 +414,50 @@ export class Game {
     await this.assetsReady;
   }
 
-  private async setupWorld(seed: string, saveData?: SaveData): Promise<void> {
+  private loading(step: LoadingStepId, progress: number): void {
+    this.mainMenu.setLoadingProgress(step, progress);
+  }
+
+  private async warmInitialChunks(onProgress: (progress: number) => void): Promise<void> {
+    if (!this.chunks || !this.world) return;
+    const previousGenerations = this.chunks.maxChunkGenerationsPerFrame;
+    const previousRebuilds = this.chunks.maxChunkRebuildsPerFrame;
+    this.chunks.maxChunkGenerationsPerFrame = Math.max(previousGenerations, 4);
+    this.chunks.maxChunkRebuildsPerFrame = Math.max(previousRebuilds, 4);
+    const passes = 10;
+    for (let i = 0; i < passes; i += 1) {
+      this.chunks.update(this.player.position);
+      onProgress((i + 1) / passes);
+      await nextFrame();
+    }
+    this.chunks.maxChunkGenerationsPerFrame = previousGenerations;
+    this.chunks.maxChunkRebuildsPerFrame = previousRebuilds;
+  }
+
+  private enterWorldFromMenu(message: string): void {
+    this.loading("enter", 1);
+    this.mainMenu.completeLoading();
+    window.setTimeout(() => {
+      this.mainMenu.hide();
+      this.pauseMenu.hide();
+      this.started = true;
+      this.quickAccess.setVisible(true);
+      this.hud.message(message);
+    }, 240);
+  }
+
+  private async setupWorld(seed: string, saveData?: SaveData, newWorldOptions?: MainMenuNewWorldOptions): Promise<void> {
     this.disposeWorld();
     this.weatherEngine.reset();
     this.convectiveClouds.clear();
     this.stormCloudMasses.clear();
+    this.loading("climate", 0.2);
     this.currentSeed = seed;
     this.world = new World(seed, this.blockRegistry, saveData?.blockChanges);
     this.livingWorld.setSeed(seed);
     this.worldSnow = new WorldSnowSystem(this.weatherEngine, this.world);
     this.worldSnow.restore(saveData?.regionalSnow);
+    this.loading("climate", 0.65);
     this.world.ensureChunk(0, 0);
     this.chunks = new ChunkManager(this.renderer.scene, this.world, this.blockRegistry, this.textureManager);
     this.chunks.renderDistance = Settings.renderDistance;
@@ -396,11 +483,13 @@ export class Game {
       this.surfaceState.clear();
       this.player.position.copy(this.world.getSpawnPosition());
       this.player.velocity.set(0, 0, 0);
-      this.player.setGameMode("creative");
-      this.time.setNamedTime("day");
-      this.weather.setWeather("clear", 80, 0, false);
+      this.player.setGameMode(newWorldOptions?.gameMode ?? "creative");
+      this.time.setNamedTime(newWorldOptions?.startTime ?? "day");
+      this.weather.setWeather(newWorldOptions?.startWeather ?? "clear", 80, newWorldOptions?.startWeather === "clear" ? 0 : 0.55, false);
+      this.seasonSystem.setSeason(newWorldOptions?.dynamicSeasons === false ? (newWorldOptions.startSeason ?? "spring") : "auto");
     }
 
+    this.loading("environment", 0.75);
     this.player.update(0, this.input, this.cameraController, this.world, false);
     this.cachedForecast = null;
     this.forecastRefreshTimer = 0;
@@ -638,6 +727,9 @@ export class Game {
 
   private handleUiKeys(): void {
     if (this.command.isOpen()) {
+      return;
+    }
+    if (this.mainMenu.isOpen()) {
       return;
     }
     if (this.input.wasPressed("Escape")) {
@@ -892,7 +984,7 @@ export class Game {
     return (next - s) / ds;
   }
 
-  private async saveGame(): Promise<void> {
+  private async saveGame(showMessage = true): Promise<void> {
     if (!this.world) {
       this.hud.message("No world to save.");
       return;
@@ -913,12 +1005,13 @@ export class Game {
       },
       time: this.time.serialize(),
       weather: this.weather.serialize(),
+      worldOptions: this.currentWorldOptions,
       surfaceWeather: this.surfaceState.serialize(),
       regionalSnow: this.worldSnow?.serialize(),
       blockChanges: this.world.serializeChanges(),
     }, this.currentWorldId, this.currentWorldName);
     await this.refreshWorldList();
-    this.hud.message("Monde sauvegarde.");
+    if (showMessage) this.hud.message("Monde sauvegarde.");
   }
 
   private async deleteWorld(worldId: string): Promise<void> {
@@ -932,12 +1025,26 @@ export class Game {
     this.hud.message("Monde supprime.");
   }
 
+  private async renameWorld(worldId: string, name: string): Promise<void> {
+    await this.saveManager.renameWorld(worldId, name);
+    if (worldId === this.currentWorldId) this.currentWorldName = name.trim() || this.currentWorldName;
+    await this.refreshWorldList();
+    this.hud.message("Monde renomme.");
+  }
+
+  private async duplicateWorld(worldId: string): Promise<void> {
+    const copy = await this.saveManager.duplicateWorld(worldId);
+    await this.refreshWorldList();
+    this.hud.message(copy ? `Copie creee: ${copy.name}.` : "Impossible de dupliquer ce monde.");
+  }
+
   private async loadGameFromCommand(): Promise<void> {
     await this.loadGame();
   }
 
   private resume(): void {
     this.pauseMenu.hide();
+    this.mainMenu.hide();
     this.input.requestPointerLock();
   }
 
@@ -947,6 +1054,18 @@ export class Game {
     this.started = false;
     this.quickAccess.setVisible(false);
     void this.refreshWorldList();
+    if (document.pointerLockElement) document.exitPointerLock();
+  }
+
+  private openWorldsFromPause(): void {
+    this.pauseMenu.hide();
+    this.mainMenu.showWorldsFromPause();
+    if (document.pointerLockElement) document.exitPointerLock();
+  }
+
+  private openSettingsFromPause(): void {
+    this.pauseMenu.hide();
+    this.mainMenu.showSettingsFromPause();
     if (document.pointerLockElement) document.exitPointerLock();
   }
 
@@ -965,7 +1084,7 @@ export class Game {
   }
 
   private isUiBlocking(): boolean {
-    return this.pauseMenu.isOpen() || this.inventory.isOpen() || this.command.isOpen() || this.weatherMapUI.isOpen() || !this.started;
+    return this.mainMenu.isOpen() || this.pauseMenu.isOpen() || this.inventory.isOpen() || this.command.isOpen() || this.weatherMapUI.isOpen() || !this.started;
   }
 
   /**
@@ -1137,6 +1256,7 @@ export class Game {
       getRenderDistance: () => this.chunks?.renderDistance ?? Settings.renderDistance,
       setQualityPreset: (preset) => this.setQualityPreset(preset),
       getQualityPreset: () => this.qualityPreset,
+      setLook: (yawDegrees, pitchDegrees) => this.cameraController.setLookDegrees(yawDegrees, pitchDegrees),
       resetCloudVisuals: () => {
         this.convectiveClouds.clear();
         this.regionalClouds.reset();
@@ -1169,9 +1289,29 @@ export class Game {
     }
   }
 
-  private setRenderDistance(distance: number): void {
+  private applyGameSettings(settings: GameSettingsSnapshot, syncMenu = true): GameSettingsSnapshot {
+    this.menuSettings = normalizeSettings(settings);
+    GameSettingsStore.save(this.menuSettings);
+    GameSettingsStore.applyToRuntime(this.menuSettings);
+    this.cameraController.sensitivity = Settings.mouseSensitivity;
+    this.cameraController.invertY = this.menuSettings.invertY;
+    this.renderer.camera.fov = this.menuSettings.fov;
+    this.renderer.camera.updateProjectionMatrix();
+    this.renderer.renderer.toneMappingExposure = 1.58 * this.menuSettings.brightness;
+    this.setQualityPreset(this.menuSettings.quality, false);
+    this.setRenderDistance(this.menuSettings.renderDistance, false);
+    if (syncMenu) this.mainMenu.setSettingsSnapshot(this.menuSettings);
+    return this.menuSettings;
+  }
+
+  private resetGameSettings(): GameSettingsSnapshot {
+    return this.applyGameSettings({ ...DEFAULT_GAME_SETTINGS }, false);
+  }
+
+  private setRenderDistance(distance: number, syncMenu = true): void {
     const clamped = Math.max(2, Math.min(16, Math.round(distance)));
     Settings.renderDistance = clamped;
+    this.menuSettings.renderDistance = clamped;
     if (this.chunks) {
       this.chunks.renderDistance = clamped;
       this.chunks.unloadDistance = clamped + 4;
@@ -1180,35 +1320,36 @@ export class Game {
     this.renderer.camera.far = 40000;
     this.renderer.camera.updateProjectionMatrix();
     this.quickAccess.setState(this.qualityPreset, clamped);
-    this.mainMenu.setSettings(this.qualityPreset, clamped);
+    if (syncMenu) this.mainMenu.setSettings(this.qualityPreset, clamped);
   }
 
-  private setQualityPreset(preset: QualityPreset): void {
+  private setQualityPreset(preset: QualityPreset, syncMenu = true): void {
     this.qualityPreset = preset;
+    this.menuSettings.quality = preset;
     this.renderer.setShadowQuality(preset);
     this.renderer.setPostQuality(preset);
     this.cloudShadows.setEnabled(preset !== "low");
     switch (preset) {
       case "low":
         this.renderer.setPixelRatioLimit(1);
-        this.setRenderDistance(3);
-        this.hud.message("Quality set to low: fewer chunks and reduced weather particles.");
+        this.setRenderDistance(3, syncMenu);
+        if (syncMenu) this.hud.message("Quality set to low: fewer chunks and reduced weather particles.");
         break;
       case "high":
         this.renderer.setPixelRatioLimit(1.5);
-        this.setRenderDistance(12);
-        this.hud.message("Quality set to high: farther chunks and denser visuals.");
+        this.setRenderDistance(12, syncMenu);
+        if (syncMenu) this.hud.message("Quality set to high: farther chunks and denser visuals.");
         break;
       case "balanced":
       default:
         this.renderer.setPixelRatioLimit(1.15);
-        this.setRenderDistance(6);
-        this.hud.message("Quality set to balanced.");
+        this.setRenderDistance(6, syncMenu);
+        if (syncMenu) this.hud.message("Quality set to balanced.");
         break;
     }
     this.configureChunkBudgets();
     this.quickAccess.setState(this.qualityPreset, Settings.renderDistance);
-    this.mainMenu.setSettings(this.qualityPreset, Settings.renderDistance);
+    if (syncMenu) this.mainMenu.setSettings(this.qualityPreset, Settings.renderDistance);
   }
 
   private cycleQualityPreset(): void {
@@ -1250,7 +1391,7 @@ export class Game {
 
   private async refreshWorldList(): Promise<void> {
     this.knownWorlds = await this.saveManager.listWorlds();
-    this.mainMenu.renderWorlds(this.knownWorlds, this.currentWorldId);
+    this.mainMenu.renderWorlds(this.knownWorlds);
   }
 
   private createWorldId(name: string): string {
@@ -1273,4 +1414,8 @@ export class Game {
     this.entities = null;
     this.world = null;
   }
+}
+
+function nextFrame(): Promise<void> {
+  return new Promise((resolve) => requestAnimationFrame(() => resolve()));
 }

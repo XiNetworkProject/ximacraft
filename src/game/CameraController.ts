@@ -6,13 +6,14 @@ export class CameraController {
   yaw = 0;
   pitch = 0;
   sensitivity = 0.0023;
+  invertY = false;
 
   constructor(private readonly camera: THREE.PerspectiveCamera) {}
 
   update(input: Input, lookEnabled: boolean): void {
     if (lookEnabled) {
       this.yaw -= input.mouseDeltaX * this.sensitivity;
-      this.pitch -= input.mouseDeltaY * this.sensitivity;
+      this.pitch += input.mouseDeltaY * this.sensitivity * (this.invertY ? 1 : -1);
       this.pitch = clamp(this.pitch, -Math.PI / 2 + 0.02, Math.PI / 2 - 0.02);
     }
 
@@ -23,6 +24,14 @@ export class CameraController {
 
   getForward(target = new THREE.Vector3()): THREE.Vector3 {
     return this.camera.getWorldDirection(target).normalize();
+  }
+
+  setLookDegrees(yawDegrees: number, pitchDegrees: number): void {
+    this.yaw = THREE.MathUtils.degToRad(yawDegrees);
+    this.pitch = clamp(THREE.MathUtils.degToRad(pitchDegrees), -Math.PI / 2 + 0.02, Math.PI / 2 - 0.02);
+    this.camera.rotation.order = "YXZ";
+    this.camera.rotation.y = this.yaw;
+    this.camera.rotation.x = this.pitch;
   }
 
   getFlatForward(target = new THREE.Vector3()): THREE.Vector3 {

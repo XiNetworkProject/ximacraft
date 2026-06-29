@@ -5,6 +5,8 @@ import { InventorySlot } from "../player/PlayerInventory";
 import { WeatherSaveData } from "./WeatherTypes";
 import { SurfaceWeatherSaveData } from "../weather/persistence/SurfaceWeatherSaveData";
 import { RegionalSnowSaveData } from "../weather/ground/WorldSnowSystem";
+import { SeasonId } from "../living/SeasonSystem";
+import { WORLD_DAY_TICKS } from "../utils/Constants";
 
 const WORLD_INDEX_KEY = `${SAVE_SLOT_KEY}-world-index`;
 const DEFAULT_WORLD_ID = "default";
@@ -12,6 +14,13 @@ const DEFAULT_WORLD_ID = "default";
 export type SaveData = {
   version: 1;
   seed: string;
+  worldOptions?: {
+    difficulty?: "peaceful" | "normal" | "hard";
+    startSeason?: SeasonId | "auto";
+    dynamicWeather?: boolean;
+    dynamicSeasons?: boolean;
+    worldQuality?: "standard" | "large" | "wild";
+  };
   player: {
     position: number[];
     velocity: number[];
@@ -39,6 +48,13 @@ export type WorldSummary = {
   createdAt: number;
   updatedAt: number;
   lastPlayedAt: number;
+  mode?: GameMode;
+  playTimeTicks?: number;
+  timeTicks?: number;
+  season?: SeasonId;
+  weather?: string;
+  thumbnailKey?: string;
+  worldOptions?: SaveData["worldOptions"];
 };
 
 export class SaveManager {
@@ -97,9 +113,47 @@ export class SaveManager {
       createdAt: now,
       updatedAt: now,
       lastPlayedAt: now,
+      mode: "creative",
+      playTimeTicks: 0,
+      timeTicks: 0,
+      season: "spring",
+      weather: "clear",
+      thumbnailKey: this.thumbnailKey(seed),
     };
     await this.upsertSummary(summary);
     return summary;
+  }
+
+  async renameWorld(worldId: string, name: string): Promise<void> {
+    const worlds = await this.listWorlds();
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    await this.writeIndex(worlds.map((world) =>
+      world.id === worldId
+        ? { ...world, name: trimmed, updatedAt: Date.now() }
+        : world,
+    ));
+  }
+
+  async duplicateWorld(worldId: string): Promise<WorldSummary | null> {
+    const source = await this.load(worldId);
+    const sourceSummary = (await this.listWorlds()).find((world) => world.id === worldId);
+    if (!source) return null;
+    const copyId = `${worldId.replace(/[^a-z0-9-]/gi, "-")}-copy-${Date.now().toString(36)}`;
+    const copyName = `${sourceSummary?.name ?? "Monde"} copie`;
+    const copy: SaveData = JSON.parse(JSON.stringify(source)) as SaveData;
+    await this.save(copy, copyId, copyName);
+    return (await this.listWorlds()).find((world) => world.id === copyId) ?? null;
+  }
+
+  async markPlayed(worldId: string): Promise<void> {
+    const worlds = await this.listWorlds();
+    const now = Date.now();
+    await this.writeIndex(worlds.map((world) =>
+      world.id === worldId
+        ? { ...world, lastPlayedAt: now, updatedAt: now }
+        : world,
+    ));
   }
 
   private keyFor(worldId: string): string {
@@ -115,6 +169,13 @@ export class SaveManager {
       createdAt: now,
       updatedAt: now,
       lastPlayedAt: now,
+      mode: data.player.gameMode,
+      playTimeTicks: Math.max(0, Math.floor(data.time.ticks)),
+      timeTicks: data.time.ticks,
+      season: seasonForTicks(data.time.ticks),
+      weather: data.weather.current,
+      thumbnailKey: this.thumbnailKey(data.seed),
+      worldOptions: data.worldOptions,
     };
   }
 
@@ -128,6 +189,7 @@ export class SaveManager {
       createdAt: existing?.createdAt ?? summary.createdAt,
       updatedAt: Date.now(),
       lastPlayedAt: Date.now(),
+      thumbnailKey: summary.thumbnailKey ?? existing?.thumbnailKey ?? this.thumbnailKey(summary.seed),
     };
     await this.writeIndex([merged, ...worlds.filter((world) => world.id !== summary.id)]);
   }
@@ -148,4 +210,21 @@ export class SaveManager {
       return null;
     }
   }
+
+  private thumbnailKey(seed: string): string {
+    let hash = 2166136261;
+    for (let i = 0; i < seed.length; i += 1) {
+      hash ^= seed.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(16).padStart(8, "0");
+  }
+}
+
+function seasonForTicks(ticks: number): SeasonId {
+  const day = Math.floor(ticks / WORLD_DAY_TICKS) % 96;
+  if (day < 24) return "spring";
+  if (day < 48) return "summer";
+  if (day < 72) return "autumn";
+  return "winter";
 }

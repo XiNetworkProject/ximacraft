@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="XimaCraft mark">
+  <defs>
+    <linearGradient id="stone" x1="18" x2="110" y1="16" y2="112" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#e8f4ff"/>
+      <stop offset=".42" stop-color="#93c7b5"/>
+      <stop offset="1" stop-color="#315446"/>
+    </linearGradient>
+    <linearGradient id="crystal" x1="40" x2="96" y1="20" y2="110" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fff7b0"/>
+      <stop offset=".5" stop-color="#72e2bd"/>
+      <stop offset="1" stop-color="#256d62"/>
+    </linearGradient>
+    <filter id="soft" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="8" flood-color="#00140d" flood-opacity=".38"/>
+    </filter>
+  </defs>
+  <path fill="#07100d" d="M16 32 32 16h24l8 16 8-16h24l16 16-30 32 30 32-16 16H72l-8-16-8 16H32L16 96l30-32z" opacity=".76"/>
+  <g filter="url(#soft)">
+    <path fill="url(#stone)" d="M24 33 35 22h17l13 27 13-27h17l10 11-28 31 28 31-10 11H78L65 79l-13 27H35L24 95l28-31z"/>
+    <path fill="url(#crystal)" d="M42 34h10l12 25 12-25h10L69 64l17 30H76L64 69 52 94H42l17-30z"/>
+    <path fill="#ffffff" d="M34 31h16l-4 8H27z" opacity=".42"/>
+    <path fill="#ffffff" d="M78 31h16l7 8H82z" opacity=".32"/>
+    <path fill="#12251e" d="M27 90h19l4 8H35z" opacity=".36"/>
+    <path fill="#12251e" d="M82 90h19l-7 8H78z" opacity=".28"/>
+  </g>
+</svg>

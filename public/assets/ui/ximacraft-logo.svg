@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 168" role="img" aria-label="XimaCraft logo">
+  <defs>
+    <linearGradient id="word" x1="128" x2="700" y1="28" y2="132" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#f6fffb"/>
+      <stop offset=".5" stop-color="#bee9d7"/>
+      <stop offset="1" stop-color="#7db596"/>
+    </linearGradient>
+    <linearGradient id="edge" x1="128" x2="700" y1="130" y2="42" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#264438"/>
+      <stop offset="1" stop-color="#f9e48b"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-30%" width="120%" height="170%">
+      <feDropShadow dx="0" dy="12" stdDeviation="10" flood-color="#00140d" flood-opacity=".45"/>
+    </filter>
+  </defs>
+  <g filter="url(#shadow)">
+    <svg x="8" y="20" width="128" height="128" viewBox="0 0 128 128">
+      <path fill="#07100d" d="M16 32 32 16h24l8 16 8-16h24l16 16-30 32 30 32-16 16H72l-8-16-8 16H32L16 96l30-32z" opacity=".72"/>
+      <path fill="#93c7b5" d="M24 33 35 22h17l13 27 13-27h17l10 11-28 31 28 31-10 11H78L65 79l-13 27H35L24 95l28-31z"/>
+      <path fill="#72e2bd" d="M42 34h10l12 25 12-25h10L69 64l17 30H76L64 69 52 94H42l17-30z"/>
+      <path fill="#fff7b0" d="M35 27h17l7 14H29z" opacity=".55"/>
+      <path fill="#17352c" d="M75 91h25l-8 9H80z" opacity=".35"/>
+    </svg>
+    <text x="150" y="104" font-family="Trebuchet MS, Verdana, Arial, sans-serif" font-size="76" font-weight="800" letter-spacing="1.5" fill="url(#edge)" stroke="#07100d" stroke-width="8" paint-order="stroke">XimaCraft</text>
+    <text x="150" y="104" font-family="Trebuchet MS, Verdana, Arial, sans-serif" font-size="76" font-weight="800" letter-spacing="1.5" fill="url(#word)">XimaCraft</text>
+    <path d="M153 121h375" stroke="#d7f7e8" stroke-width="3" stroke-linecap="round" opacity=".46"/>
+    <path d="M541 121h48" stroke="#f2d77a" stroke-width="3" stroke-linecap="round" opacity=".7"/>
+  </g>
+</svg>

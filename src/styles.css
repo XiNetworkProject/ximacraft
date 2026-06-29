@@ -1171,3 +1171,447 @@ input {
     font-size: 11px;
   }
 }
+
+/* Menu router v2: one route visible at a time. This intentionally lives after
+   the legacy menu CSS so it overrides the old multi-panel layout. */
+:root {
+  --ui-scale: 1;
+  --game-brightness: 1;
+}
+
+.game-canvas {
+  filter: brightness(var(--game-brightness));
+}
+
+.main-menu-shell {
+  display: block !important;
+  padding: 0 !important;
+  background: #05070a;
+  overflow: hidden !important;
+}
+
+.menu-route-stack {
+  position: relative;
+  z-index: 1;
+  height: calc(100vh - 56px);
+  padding: clamp(18px, 4vw, 58px);
+  transform: scale(var(--ui-scale));
+  transform-origin: top left;
+}
+
+.main-menu-shell .menu-page {
+  display: none !important;
+}
+
+.main-menu-shell .menu-page.active {
+  display: grid !important;
+  width: min(790px, calc(100vw - 56px));
+  max-height: calc(100vh - 112px);
+  overflow: auto;
+  overscroll-behavior: contain;
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+  border: 1px solid rgba(168, 221, 204, 0.17);
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 18% 12%, rgba(126, 224, 190, 0.12), transparent 34%),
+    linear-gradient(160deg, rgba(18, 26, 36, 0.86), rgba(5, 9, 14, 0.92));
+  box-shadow:
+    0 34px 90px rgba(0, 0, 0, 0.62),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  padding: clamp(20px, 2.4vw, 34px);
+  backdrop-filter: blur(18px) saturate(1.08);
+  animation: routed-menu-in 0.22s ease-out both;
+}
+
+.menu-worlds-page.active,
+.menu-create-page.active,
+.menu-settings-page.active,
+.menu-credits-page.active {
+  width: min(1120px, calc(100vw - 56px));
+}
+
+.menu-loading-page.active {
+  width: min(760px, calc(100vw - 56px));
+  margin-top: min(10vh, 90px);
+  text-align: center;
+}
+
+@keyframes routed-menu-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.ximacraft-logo {
+  width: min(620px, 100%);
+  margin-bottom: clamp(16px, 3vh, 34px);
+  animation: logo-soft-in 0.55s ease-out both;
+}
+
+.ximacraft-logo.compact {
+  width: 112px;
+  margin: 0 auto 16px;
+}
+
+.ximacraft-logo img {
+  display: block;
+  width: 100%;
+  max-height: 150px;
+  object-fit: contain;
+  object-position: left center;
+}
+
+.ximacraft-logo.compact img {
+  max-height: 96px;
+  object-position: center;
+}
+
+@keyframes logo-soft-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); filter: brightness(0.8); }
+  to { opacity: 1; transform: none; filter: brightness(1); }
+}
+
+.menu-home.active {
+  align-content: center;
+  gap: 18px;
+  min-height: min(720px, calc(100vh - 112px));
+}
+
+.menu-lead,
+.home-scene-label {
+  color: #e0e8e5;
+  font-size: clamp(15px, 1.25vw, 19px);
+  line-height: 1.5;
+  max-width: 62ch;
+}
+
+.home-scene-label {
+  color: #b8c9c5;
+  font-size: 14px;
+}
+
+.menu-page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.menu-page-header span {
+  display: block;
+  color: #a4bdb4;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  margin-bottom: 6px;
+}
+
+.menu-page-header h2,
+.menu-worlds-page h2,
+.menu-create-page h2,
+.menu-settings-page h2,
+.menu-credits-page h2 {
+  margin: 0;
+  font-size: clamp(28px, 3.2vw, 44px);
+  letter-spacing: 0;
+}
+
+.world-toolbar,
+.form-row,
+.form-actions,
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.world-toolbar {
+  margin-bottom: 16px;
+}
+
+.world-toolbar input {
+  min-width: min(320px, 100%);
+}
+
+.world-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px;
+  min-height: 260px;
+}
+
+.world-card {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 14px;
+  background: linear-gradient(160deg, rgba(17, 25, 34, 0.9), rgba(9, 14, 20, 0.9));
+  padding: 12px;
+}
+
+.world-card.featured {
+  border-color: rgba(125, 214, 178, 0.55);
+  box-shadow: 0 12px 28px rgba(30, 120, 92, 0.18);
+}
+
+.world-preview {
+  position: relative;
+  min-height: 128px;
+  border-radius: 10px;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 70% 20%, var(--preview-sun), transparent 14%),
+    linear-gradient(180deg, #5da0df 0 42%, var(--preview-a) 42% 70%, var(--preview-b) 70%);
+}
+
+.world-preview i,
+.world-preview b {
+  position: absolute;
+  left: -8%;
+  right: -8%;
+  height: 46%;
+  bottom: -7%;
+  background: rgba(0, 0, 0, 0.22);
+  clip-path: polygon(0 72%, 18% 48%, 38% 64%, 58% 34%, 82% 58%, 100% 38%, 100% 100%, 0 100%);
+}
+
+.world-preview b {
+  bottom: 7%;
+  opacity: 0.45;
+  transform: scaleY(0.7);
+}
+
+.world-card-title h3 {
+  margin: 0 0 4px;
+  font-size: 19px;
+}
+
+.world-card-title small {
+  color: #aebbc5;
+}
+
+.world-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.world-meta div {
+  min-width: 0;
+}
+
+.world-meta dt {
+  color: #8fa39f;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.world-meta dd {
+  margin: 1px 0 0;
+  color: #f4faf8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.world-card-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.world-empty-state {
+  grid-column: 1 / -1;
+  display: grid;
+  place-items: center;
+  gap: 12px;
+  min-height: 260px;
+  text-align: center;
+  color: #c9d8d4;
+}
+
+.creation-progress,
+.settings-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+
+.creation-progress span,
+.settings-tabs button {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  background: rgba(10, 16, 24, 0.6);
+  color: #cbd5e1;
+  padding: 8px 12px;
+  font-weight: 800;
+}
+
+.creation-progress span.active,
+.creation-progress span.done,
+.settings-tabs button.active {
+  border-color: rgba(125, 214, 178, 0.62);
+  background: rgba(87, 180, 145, 0.18);
+  color: #e9fff7;
+}
+
+.creation-step-body,
+.settings-body {
+  display: grid;
+  gap: 14px;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  gap: 14px;
+}
+
+.toggle-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.toggle-label,
+.setting-row.switch {
+  display: flex !important;
+  grid-template-columns: none !important;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.main-menu-shell input[type="checkbox"] {
+  width: 22px;
+  height: 22px;
+  min-height: 0;
+  padding: 0;
+  accent-color: #8be0c0;
+}
+
+.main-menu-shell input[type="range"] {
+  width: 100%;
+  padding: 0;
+  accent-color: #8be0c0;
+}
+
+.setting-row {
+  display: grid;
+  gap: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  background: rgba(8, 13, 20, 0.48);
+  padding: 12px;
+}
+
+.setting-row > span {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.creation-summary {
+  border: 1px solid rgba(125, 214, 178, 0.24);
+  border-radius: 14px;
+  background: rgba(8, 13, 20, 0.5);
+  padding: 18px;
+}
+
+.creation-summary h3 {
+  margin: 0 0 4px;
+}
+
+.creation-summary dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 16px 0 0;
+}
+
+.form-error {
+  min-height: 20px;
+  color: #fecaca;
+}
+
+.loading-progress {
+  width: 100%;
+  height: 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+  margin: 20px 0;
+}
+
+.loading-progress i {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #70d4b0, #f3d57a);
+  transition: width 0.18s ease;
+}
+
+.loading-steps {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 0;
+  list-style: none;
+  text-align: left;
+}
+
+.loading-steps li {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: rgba(8, 13, 20, 0.45);
+  color: #9fb0ad;
+  padding: 9px 10px;
+}
+
+.loading-steps li.active,
+.loading-steps li.done {
+  color: #f4fff9;
+  border-color: rgba(125, 214, 178, 0.45);
+}
+
+.credits-scroll {
+  overflow: auto;
+  max-height: calc(100vh - 240px);
+  line-height: 1.55;
+  color: #d7e3df;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .main-menu-shell .menu-page.active,
+  .ximacraft-logo {
+    animation: none;
+  }
+}
+
+@media (max-width: 820px) {
+  .menu-route-stack {
+    padding: 12px;
+  }
+
+  .main-menu-shell .menu-page.active,
+  .menu-worlds-page.active,
+  .menu-create-page.active,
+  .menu-settings-page.active,
+  .menu-credits-page.active {
+    width: calc(100vw - 24px);
+    max-height: calc(100vh - 84px);
+  }
+
+  .form-grid,
+  .world-meta,
+  .creation-summary dl,
+  .loading-steps {
+    grid-template-columns: 1fr;
+  }
+}

@@ -10,6 +10,8 @@ export class PauseMenu {
       openMap: () => void;
       openInventory: () => void;
       openCommands: () => void;
+      openWorlds: () => void;
+      openSettings: () => void;
       mainMenu: () => void;
     },
   ) {
@@ -26,6 +28,8 @@ export class PauseMenu {
       this.button("Carte meteo", callbacks.openMap, "secondary"),
       this.button("Inventaire / craft", callbacks.openInventory, "secondary"),
       this.button("Commandes", callbacks.openCommands, "secondary"),
+      this.button("Mes mondes", callbacks.openWorlds, "secondary"),
+      this.button("Parametres", callbacks.openSettings, "secondary"),
       this.button("Sauvegarder", callbacks.save, "secondary"),
       this.button("Menu principal", callbacks.mainMenu, "secondary"),
     );

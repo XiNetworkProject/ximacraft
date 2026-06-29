@@ -59,6 +59,7 @@ export type CommandContext = {
   getRenderDistance: () => number;
   setQualityPreset: (preset: "low" | "balanced" | "high") => void;
   getQualityPreset: () => "low" | "balanced" | "high";
+  setLook: (yawDegrees: number, pitchDegrees: number) => void;
   resetCloudVisuals: () => void;
   livingWorld?: LivingWorldSystem;
   seasonSystem?: SeasonSystem;
@@ -142,6 +143,7 @@ export const COMMANDS: CommandDefinition[] = [
   { usage: "/sky clouds|wind|fog|stars|moonphase ...", prefix: "/sky", description: "Legacy sky controls." },
   { usage: "/gamemode creative|survival", prefix: "/gamemode", description: "Change game mode." },
   { usage: "/tp x y z", prefix: "/tp", description: "Teleport player." },
+  { usage: "/look <yaw> <pitch>", prefix: "/look", description: "Set camera orientation in degrees without breaking pointer lock." },
   { usage: "/renderdistance 2-16", prefix: "/renderdistance", description: "Set chunk render distance." },
   { usage: "/quality low|balanced|high", prefix: "/quality", description: "Switch performance/visual preset." },
   { usage: "/world regen loaded", prefix: "/world regen loaded", description: "Regenerate loaded terrain chunks with the current generator." },
@@ -334,6 +336,9 @@ export class CommandSystem {
           break;
         case "tp":
           this.executeTeleport(parts);
+          break;
+        case "look":
+          this.executeLook(parts);
           break;
         case "seed":
           this.write(`Seed: ${this.context.getSeed()}`);
@@ -601,6 +606,17 @@ export class CommandSystem {
     this.context!.player.position.set(x, y, z);
     this.context!.player.velocity.set(0, 0, 0);
     this.write(`Teleported to ${x} ${y} ${z}.`);
+  }
+
+  private executeLook(parts: string[]): void {
+    const yaw = Number(parts[1]);
+    const pitch = Number(parts[2]);
+    if (![yaw, pitch].every(Number.isFinite)) {
+      this.write("Usage: /look 180 0");
+      return;
+    }
+    this.context!.setLook(yaw, pitch);
+    this.write(`Camera look set to yaw=${yaw} pitch=${pitch}.`);
   }
 
   private executeRenderDistance(parts: string[]): void {
