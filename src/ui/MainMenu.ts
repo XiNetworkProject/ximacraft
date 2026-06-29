@@ -1,9 +1,19 @@
 import { WorldSummary } from "../world/SaveManager";
+import { MainMenuBackground } from "./MainMenuBackground";
 
 export type MainMenuNewWorldOptions = {
   name: string;
   seed?: string;
 };
+
+const MENU_TIPS = [
+  "Astuce — appuie sur T ou / pour ouvrir la console de commandes.",
+  "Astuce — la météo est régionale : elle se forme, se déplace et se dissipe.",
+  "Astuce — F3 affiche le débogage, M ouvre la carte radar.",
+  "Astuce — nage avec Espace pour remonter, Maj pour plonger.",
+  "Astuce — après une averse au soleil bas, guette l'arc-en-ciel.",
+  "Astuce — explore loin : les biomes changent sur de longues distances.",
+];
 
 export class MainMenu {
   readonly root: HTMLDivElement;
@@ -13,6 +23,10 @@ export class MainMenu {
   private readonly seedInput: HTMLInputElement;
   private readonly qualitySelect: HTMLSelectElement;
   private readonly renderDistanceInput: HTMLInputElement;
+  private readonly background = new MainMenuBackground();
+  private readonly tipElement: HTMLParagraphElement;
+  private tipTimer = 0;
+  private tipIndex = 0;
   private selectedWorldId: string | null = null;
   private worlds: WorldSummary[] = [];
 
@@ -82,15 +96,57 @@ export class MainMenu {
       this.root.querySelector(".render-distance-label")!.textContent = `${value}`;
       this.callbacks.setRenderDistance(value);
     });
+
+    // Fond animé derrière les panneaux.
+    this.background.canvas.classList.add("main-menu-bg");
+    this.root.prepend(this.background.canvas);
+
+    // Pied de page : version + astuce rotative.
+    const footer = document.createElement("footer");
+    footer.className = "main-menu-footer";
+    const version = document.createElement("span");
+    version.className = "menu-version";
+    version.textContent = "XimaCraft · v0.1";
+    this.tipElement = document.createElement("p");
+    this.tipElement.className = "menu-tip";
+    this.tipElement.textContent = MENU_TIPS[0];
+    footer.append(version, this.tipElement);
+    this.root.appendChild(footer);
+
     overlay.appendChild(this.root);
+    this.background.start();
+    this.startTips();
   }
 
   show(): void {
     this.root.classList.remove("hidden");
+    this.background.start();
+    this.startTips();
   }
 
   hide(): void {
     this.root.classList.add("hidden");
+    this.background.stop();
+    this.stopTips();
+  }
+
+  private startTips(): void {
+    this.stopTips();
+    this.tipTimer = window.setInterval(() => {
+      this.tipIndex = (this.tipIndex + 1) % MENU_TIPS.length;
+      this.tipElement.classList.add("fading");
+      window.setTimeout(() => {
+        this.tipElement.textContent = MENU_TIPS[this.tipIndex];
+        this.tipElement.classList.remove("fading");
+      }, 320);
+    }, 6500);
+  }
+
+  private stopTips(): void {
+    if (this.tipTimer) {
+      clearInterval(this.tipTimer);
+      this.tipTimer = 0;
+    }
   }
 
   renderWorlds(worlds: WorldSummary[], selectedWorldId = this.selectedWorldId): void {
