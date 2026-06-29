@@ -1,3 +1,5 @@
+import { BlockShape } from "./blockstate/BlockShape";
+
 export enum BlockId {
   AIR = 0,
   STONE = 1,
@@ -123,6 +125,46 @@ export enum BlockId {
   WEATHERED_BEAM = 121,
   WEATHERED_BEAM_X = 122,
   WEATHERED_BEAM_Z = 123,
+  OAK_SLAB = 124,
+  OAK_SLAB_TOP = 125,
+  OAK_STAIRS_NORTH = 126,
+  OAK_STAIRS_SOUTH = 127,
+  OAK_STAIRS_EAST = 128,
+  OAK_STAIRS_WEST = 129,
+  OAK_FENCE = 130,
+  OAK_DOOR_NORTH = 131,
+  OAK_DOOR_SOUTH = 132,
+  OAK_DOOR_EAST = 133,
+  OAK_DOOR_WEST = 134,
+  COBBLESTONE_SLAB = 135,
+  COBBLESTONE_SLAB_TOP = 136,
+  COBBLESTONE_STAIRS_NORTH = 137,
+  COBBLESTONE_STAIRS_SOUTH = 138,
+  COBBLESTONE_STAIRS_EAST = 139,
+  COBBLESTONE_STAIRS_WEST = 140,
+  COBBLESTONE_WALL = 141,
+  MOSSY_COBBLESTONE_WALL = 142,
+  STONE_BRICK_SLAB = 143,
+  STONE_BRICK_SLAB_TOP = 144,
+  STONE_BRICK_STAIRS_NORTH = 145,
+  STONE_BRICK_STAIRS_SOUTH = 146,
+  STONE_BRICK_STAIRS_EAST = 147,
+  STONE_BRICK_STAIRS_WEST = 148,
+  STONE_BRICK_WALL = 149,
+  GLASS_PANE = 150,
+  WEATHERED_ROOF_NORTH = 151,
+  WEATHERED_ROOF_SOUTH = 152,
+  WEATHERED_ROOF_EAST = 153,
+  WEATHERED_ROOF_WEST = 154,
+  LANTERN_POST = 155,
+  HANGING_LANTERN = 156,
+  DIRT_PATH = 157,
+  GRAVEL_PATH = 158,
+  COBBLESTONE_PATH = 159,
+  LOW_BORDER = 160,
+  CHAIN = 161,
+  SIGN_POST = 162,
+  CHIMNEY = 163,
 }
 
 export function isSnowLayer(id: BlockId | number): boolean {
@@ -145,9 +187,20 @@ export function isPlant(id: BlockId | number): boolean {
     id === BlockId.WILD_BUSH ||
     id === BlockId.REEDS ||
     id === BlockId.LILY_PAD ||
-    id === BlockId.MOSS_CARPET ||
-    id === BlockId.ANIMAL_TRACKS
+    id === BlockId.MOSS_CARPET
   );
+}
+
+export function isLegacyTrack(id: BlockId | number): boolean {
+  return id === BlockId.ANIMAL_TRACKS;
+}
+
+export function isPathBlock(id: BlockId | number): boolean {
+  return id === BlockId.DIRT_PATH || id === BlockId.GRAVEL_PATH || id === BlockId.COBBLESTONE_PATH;
+}
+
+export function isFenceOrWall(id: BlockId | number): boolean {
+  return id === BlockId.OAK_FENCE || id === BlockId.COBBLESTONE_WALL || id === BlockId.MOSSY_COBBLESTONE_WALL || id === BlockId.STONE_BRICK_WALL;
 }
 
 export function snowLayerLevel(id: BlockId | number): number {
@@ -190,4 +243,5 @@ export type BlockDefinition = {
   collisionHeight?: number;
   renderHeight?: number;
   renderStyle?: "cube" | "cross";
+  shape?: BlockShape;
 };

@@ -2,12 +2,26 @@ import { WeatherSample, WeatherType } from "../weather/WeatherTypes";
 import { SurfaceWeatherState } from "../weather/ground/SurfaceWeatherState";
 import { World } from "../world/World";
 import { BlockId, isPlant, isSnowLayer } from "../world/BlockTypes";
+import { CHUNK_SIZE, WORLD_HEIGHT } from "../utils/Constants";
+
+export interface SurfaceTrace {
+  x: number;
+  y: number;
+  z: number;
+  createdAt: number;
+  ttl: number;
+  strength: number;
+}
 
 export class WorldMemorySystem {
   private timer = 0;
   private cursor = 0;
+  private age = 0;
+  private readonly traces: SurfaceTrace[] = [];
 
   update(delta: number, world: World, surface: SurfaceWeatherState, player: { x: number; z: number }, sample: WeatherSample): void {
+    this.age += delta;
+    this.pruneTraces(sample);
     this.timer -= delta;
     if (this.timer > 0) return;
     this.timer = sample.windSpeed > 16 || sample.precipitation > 0.1 ? 1.2 : 2.8;
@@ -25,7 +39,7 @@ export class WorldMemorySystem {
       const col = surface.get(x, z);
       const wet = col?.wetness ?? 0;
       if (this.shouldLeaveTracks(base, above, wet, sample)) {
-        world.setBlock(x, y + 1, z, BlockId.ANIMAL_TRACKS);
+        this.addTrace(x, y + 1, z, wet, sample);
         continue;
       }
       if (this.shouldDropBranch(base, above, sample)) {
@@ -35,7 +49,35 @@ export class WorldMemorySystem {
   }
 
   debug(sample: WeatherSample): string {
-    return `WorldMemory wind=${sample.windSpeed.toFixed(1)} precip=${sample.precipitation.toFixed(2)}`;
+    return `WorldMemory traces=${this.traces.length} wind=${sample.windSpeed.toFixed(1)} precip=${sample.precipitation.toFixed(2)}`;
+  }
+
+  getSurfaceTraces(): readonly SurfaceTrace[] {
+    return this.traces;
+  }
+
+  cleanupGeneratedTrackBlocks(world: World): number {
+    let removed = 0;
+    for (const chunk of world.chunks.values()) {
+      for (let y = 0; y < WORLD_HEIGHT; y += 1) {
+        for (let z = 0; z < CHUNK_SIZE; z += 1) {
+          for (let x = 0; x < CHUNK_SIZE; x += 1) {
+            if (chunk.getLocal(x, y, z) === BlockId.ANIMAL_TRACKS) {
+              chunk.setLocal(x, y, z, BlockId.AIR);
+              removed += 1;
+            }
+          }
+        }
+      }
+      if (removed > 0) chunk.dirty = true;
+    }
+    for (const [key, blockId] of world.blockChanges.entries()) {
+      if (blockId === BlockId.ANIMAL_TRACKS) {
+        world.blockChanges.delete(key);
+      }
+    }
+    this.traces.length = 0;
+    return removed;
   }
 
   private shouldLeaveTracks(base: BlockId, above: BlockId, wetness: number, sample: WeatherSample): boolean {
@@ -53,5 +95,31 @@ export class WorldMemorySystem {
     if (sample.windSpeed < 17 && sample.weatherType !== WeatherType.THUNDERSTORM) return false;
     const hash = (this.cursor * 1664525 + 1013904223) >>> 0;
     return (hash % 1000) / 1000 < 0.018;
+  }
+
+  private addTrace(x: number, y: number, z: number, wetness: number, sample: WeatherSample): void {
+    const existing = this.traces.find((trace) => Math.abs(trace.x - x) <= 1 && Math.abs(trace.z - z) <= 1 && Math.abs(trace.y - y) <= 1);
+    if (existing) {
+      existing.createdAt = this.age;
+      existing.strength = Math.min(1, existing.strength + 0.18);
+      return;
+    }
+    const stormWear = sample.precipitation > 0.35 || sample.windSpeed > 18 ? 0.45 : 1;
+    const ttl = (60 + wetness * 180) * stormWear;
+    this.traces.push({ x, y, z, createdAt: this.age, ttl, strength: 0.45 + wetness * 0.45 });
+    if (this.traces.length > 256) {
+      this.traces.splice(0, this.traces.length - 256);
+    }
+  }
+
+  private pruneTraces(sample: WeatherSample): void {
+    if (this.traces.length === 0) return;
+    const weatherWear = sample.precipitation > 0.08 ? 2.2 : sample.windSpeed > 16 ? 1.35 : 1;
+    for (let i = this.traces.length - 1; i >= 0; i -= 1) {
+      const trace = this.traces[i];
+      if ((this.age - trace.createdAt) * weatherWear > trace.ttl) {
+        this.traces.splice(i, 1);
+      }
+    }
   }
 }

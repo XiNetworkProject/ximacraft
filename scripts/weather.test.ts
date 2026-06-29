@@ -22,6 +22,7 @@ import { TerrainGenerator } from "../src/world/TerrainGenerator";
 import { BlockId } from "../src/world/BlockTypes";
 import { Chunk } from "../src/world/Chunk";
 import { SEA_LEVEL } from "../src/utils/Constants";
+import { BlockGeometryBuilder } from "../src/world/BlockGeometryBuilder";
 
 let passed = 0;
 let failed = 0;
@@ -357,8 +358,8 @@ console.log("\n[living] vegetation decorators generate grouped natural detail");
     }
   }
 
-  check("meadows create visible grass and flower groups", meadowPlants > 300, `count=${meadowPlants}`);
-  check("forests create fern/bush/moss undergrowth", forestGroundCover > 160, `count=${forestGroundCover}`);
+  check("meadows create visible but budgeted grass and flower groups", meadowPlants > 180 && meadowPlants < 900, `count=${meadowPlants}`);
+  check("forests create grouped fern/bush/moss undergrowth without carpeting every tile", forestGroundCover > 50 && forestGroundCover < 500, `count=${forestGroundCover}`);
 
   let shoreDecor = 0;
   for (let cz = -3; cz <= 3; cz += 1) {
@@ -375,12 +376,54 @@ console.log("\n[living] vegetation decorators generate grouped natural detail");
           chunk.setLocal(x, h, z, BlockId.GRASS);
           gen.living.decorateColumn(chunk, x, h, z, "plains");
           const above = chunk.getLocal(x, h + 1, z);
-          if (above === BlockId.REEDS || above === BlockId.ANIMAL_TRACKS || chunk.getLocal(x, h, z) === BlockId.MUD) shoreDecor += 1;
+          if (above === BlockId.REEDS || chunk.getLocal(x, h, z) === BlockId.MUD) shoreDecor += 1;
         }
       }
     }
   }
-  check("shore decorators add reeds, mud or tracks near water", shoreDecor > 80, `count=${shoreDecor}`);
+  check("shore decorators add reeds or mud near water without legacy track blocks", shoreDecor > 60, `count=${shoreDecor}`);
+
+  let generatedTracks = 0;
+  for (let cz = -1; cz <= 1; cz += 1) {
+    for (let cx = -1; cx <= 1; cx += 1) {
+      const chunk = new Chunk(cx, cz);
+      gen.generateChunk(chunk);
+      for (const block of chunk.blocks) {
+        if (block === BlockId.ANIMAL_TRACKS) generatedTracks += 1;
+      }
+    }
+  }
+  check("terrain generation never emits legacy animal track blocks", generatedTracks === 0, `tracks=${generatedTracks}`);
+}
+
+// ============================================================================
+console.log("\n[world] region planner and block geometry are deterministic");
+{
+  const a = new TerrainGenerator("region-shape-test");
+  const b = new TerrainGenerator("region-shape-test");
+  let sameRegionPlan = true;
+  let sawRoadOrSettlement = false;
+  for (let z = -1536; z <= 1536; z += 64) {
+    for (let x = -1536; x <= 1536; x += 64) {
+      const ha = a.getHeight(x, z);
+      const hb = b.getHeight(x, z);
+      const ba = a.biomes.sample(x, z, ha).id;
+      const bb = b.biomes.sample(x, z, hb).id;
+      const pa = a.regions.sampleColumn(x, z, ha, ba, (wx, wz) => a.getHeight(wx, wz));
+      const pb = b.regions.sampleColumn(x, z, hb, bb, (wx, wz) => b.getHeight(wx, wz));
+      sameRegionPlan &&= JSON.stringify(pa) === JSON.stringify(pb);
+      sawRoadOrSettlement ||= !!pa.surface || pa.blocks.length > 0;
+    }
+  }
+  check("same seed produces identical region plans", sameRegionPlan);
+  check("broad scan finds at least one road or settlement column", sawRoadOrSettlement);
+
+  const slab = BlockGeometryBuilder.boxesFor("slab_bottom", { north: false, south: false, east: false, west: false, up: false, down: false }, 1);
+  const stair = BlockGeometryBuilder.boxesFor("stair_north", { north: false, south: false, east: false, west: false, up: false, down: false }, 1);
+  const fence = BlockGeometryBuilder.boxesFor("fence", { north: true, south: false, east: true, west: false, up: false, down: false }, 1);
+  check("slab geometry is half-height", slab.length === 1 && slab[0].maxY === 0.5);
+  check("stair geometry is built from multiple boxes, not a full cube", stair.length >= 2);
+  check("connected fence geometry adds two rails only toward connections", fence.length === 5);
 }
 
 // ============================================================================

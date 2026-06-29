@@ -1,4 +1,41 @@
 import { BlockDefinition, BlockFace, BlockId } from "./BlockTypes";
+import { BlockShape } from "./blockstate/BlockShape";
+
+function shapedBlock(
+  id: BlockId,
+  key: string,
+  displayName: string,
+  texture: string,
+  shape: BlockShape,
+  color: number,
+  options: Partial<BlockDefinition> = {},
+): BlockDefinition {
+  return {
+    id,
+    key,
+    displayName,
+    texture,
+    shape,
+    solid: options.solid ?? true,
+    transparent: options.transparent,
+    hardness: options.hardness ?? 1.2,
+    emitsLight: options.emitsLight,
+    lightLevel: options.lightLevel,
+    color,
+    creativeHidden: options.creativeHidden,
+    collisionHeight: options.collisionHeight,
+    renderHeight: options.renderHeight,
+  };
+}
+
+function stairs(baseId: BlockId, key: string, displayName: string, texture: string, color: number, hardness = 1.4): BlockDefinition[] {
+  return [
+    shapedBlock(baseId, `${key}_stairs_north`, displayName, texture, "stair_north", color, { hardness }),
+    shapedBlock((baseId + 1) as BlockId, `${key}_stairs_south`, displayName, texture, "stair_south", color, { hardness, creativeHidden: true }),
+    shapedBlock((baseId + 2) as BlockId, `${key}_stairs_east`, displayName, texture, "stair_east", color, { hardness, creativeHidden: true }),
+    shapedBlock((baseId + 3) as BlockId, `${key}_stairs_west`, displayName, texture, "stair_west", color, { hardness, creativeHidden: true }),
+  ];
+}
 
 const blocks: BlockDefinition[] = [
   { id: BlockId.AIR, key: "air", displayName: "Air", solid: false, transparent: true, hardness: 0, color: 0x000000 },
@@ -367,13 +404,15 @@ const blocks: BlockDefinition[] = [
   {
     id: BlockId.ANIMAL_TRACKS,
     key: "animal_tracks",
-    displayName: "Animal Tracks",
+    displayName: "Legacy Animal Tracks",
     texture: "animal_tracks",
     solid: false,
     transparent: true,
     hardness: 0.02,
-    color: 0x5f5144,
-    renderHeight: 0.04,
+    color: 0x9b8a6d,
+    renderHeight: 0.012,
+    shape: "flat",
+    creativeHidden: true,
   },
   {
     id: BlockId.CAMPFIRE,
@@ -426,6 +465,37 @@ const blocks: BlockDefinition[] = [
     color: 0x4c3b2c,
     creativeHidden: true,
   },
+  shapedBlock(BlockId.OAK_SLAB, "oak_slab", "Oak Slab", "oak_planks", "slab_bottom", 0xb98245, { collisionHeight: 0.5, hardness: 1.4 }),
+  shapedBlock(BlockId.OAK_SLAB_TOP, "oak_slab_top", "Oak Slab", "oak_planks", "slab_top", 0xb98245, { creativeHidden: true, hardness: 1.4 }),
+  ...stairs(BlockId.OAK_STAIRS_NORTH, "oak", "Oak Stairs", "oak_planks", 0xb98245, 1.4),
+  shapedBlock(BlockId.OAK_FENCE, "oak_fence", "Oak Fence", "oak_planks", "fence", 0x9a6b36, { collisionHeight: 1.5, hardness: 1.4 }),
+  shapedBlock(BlockId.OAK_DOOR_NORTH, "oak_door_north", "Oak Door", "oak_planks", "door_north", 0xb98245, { transparent: true, hardness: 1.2 }),
+  shapedBlock(BlockId.OAK_DOOR_SOUTH, "oak_door_south", "Oak Door", "oak_planks", "door_south", 0xb98245, { transparent: true, hardness: 1.2, creativeHidden: true }),
+  shapedBlock(BlockId.OAK_DOOR_EAST, "oak_door_east", "Oak Door", "oak_planks", "door_east", 0xb98245, { transparent: true, hardness: 1.2, creativeHidden: true }),
+  shapedBlock(BlockId.OAK_DOOR_WEST, "oak_door_west", "Oak Door", "oak_planks", "door_west", 0xb98245, { transparent: true, hardness: 1.2, creativeHidden: true }),
+  shapedBlock(BlockId.COBBLESTONE_SLAB, "cobblestone_slab", "Cobblestone Slab", "cobblestone", "slab_bottom", 0x74777a, { collisionHeight: 0.5, hardness: 1.6 }),
+  shapedBlock(BlockId.COBBLESTONE_SLAB_TOP, "cobblestone_slab_top", "Cobblestone Slab", "cobblestone", "slab_top", 0x74777a, { creativeHidden: true, hardness: 1.6 }),
+  ...stairs(BlockId.COBBLESTONE_STAIRS_NORTH, "cobblestone", "Cobblestone Stairs", "cobblestone", 0x74777a, 1.6),
+  shapedBlock(BlockId.COBBLESTONE_WALL, "cobblestone_wall", "Cobblestone Wall", "cobblestone", "wall", 0x74777a, { collisionHeight: 1.5, hardness: 1.6 }),
+  shapedBlock(BlockId.MOSSY_COBBLESTONE_WALL, "mossy_cobblestone_wall", "Mossy Cobblestone Wall", "mossy_cobblestone", "wall", 0x59674f, { collisionHeight: 1.5, hardness: 1.6 }),
+  shapedBlock(BlockId.STONE_BRICK_SLAB, "stone_brick_slab", "Stone Brick Slab", "stone_bricks", "slab_bottom", 0x777a78, { collisionHeight: 0.5, hardness: 1.6 }),
+  shapedBlock(BlockId.STONE_BRICK_SLAB_TOP, "stone_brick_slab_top", "Stone Brick Slab", "stone_bricks", "slab_top", 0x777a78, { creativeHidden: true, hardness: 1.6 }),
+  ...stairs(BlockId.STONE_BRICK_STAIRS_NORTH, "stone_brick", "Stone Brick Stairs", "stone_bricks", 0x777a78, 1.6),
+  shapedBlock(BlockId.STONE_BRICK_WALL, "stone_brick_wall", "Stone Brick Wall", "stone_bricks", "wall", 0x777a78, { collisionHeight: 1.5, hardness: 1.6 }),
+  shapedBlock(BlockId.GLASS_PANE, "glass_pane", "Glass Pane", "glass", "pane", 0xd8f3ff, { transparent: true, hardness: 0.3 }),
+  shapedBlock(BlockId.WEATHERED_ROOF_NORTH, "weathered_roof_north", "Weathered Roof", "weathered_planks", "roof_north", 0x62523e, { hardness: 1.2 }),
+  shapedBlock(BlockId.WEATHERED_ROOF_SOUTH, "weathered_roof_south", "Weathered Roof", "weathered_planks", "roof_south", 0x62523e, { hardness: 1.2, creativeHidden: true }),
+  shapedBlock(BlockId.WEATHERED_ROOF_EAST, "weathered_roof_east", "Weathered Roof", "weathered_planks", "roof_east", 0x62523e, { hardness: 1.2, creativeHidden: true }),
+  shapedBlock(BlockId.WEATHERED_ROOF_WEST, "weathered_roof_west", "Weathered Roof", "weathered_planks", "roof_west", 0x62523e, { hardness: 1.2, creativeHidden: true }),
+  shapedBlock(BlockId.LANTERN_POST, "lantern_post", "Lantern Post", "weathered_beam", "lantern_post", 0xd59c46, { transparent: true, emitsLight: true, lightLevel: 12, collisionHeight: 1.5, hardness: 0.8 }),
+  shapedBlock(BlockId.HANGING_LANTERN, "hanging_lantern", "Hanging Lantern", "glowstone", "hanging_lantern", 0xffc15d, { transparent: true, emitsLight: true, lightLevel: 13, hardness: 0.6 }),
+  shapedBlock(BlockId.DIRT_PATH, "dirt_path", "Dirt Path", "dirt", "path", 0x8b633f, { collisionHeight: 0.12, hardness: 0.4 }),
+  shapedBlock(BlockId.GRAVEL_PATH, "gravel_path", "Gravel Path", "gravel", "path", 0x7c7870, { collisionHeight: 0.12, hardness: 0.5 }),
+  shapedBlock(BlockId.COBBLESTONE_PATH, "cobblestone_path", "Cobblestone Path", "cobblestone", "path", 0x74777a, { collisionHeight: 0.12, hardness: 1.2 }),
+  shapedBlock(BlockId.LOW_BORDER, "low_border", "Low Stone Border", "stone", "wall", 0x8a8b86, { collisionHeight: 0.7, hardness: 1.2 }),
+  shapedBlock(BlockId.CHAIN, "chain", "Chain", "iron_block", "pane", 0xa2a5a8, { transparent: true, hardness: 1.0 }),
+  shapedBlock(BlockId.SIGN_POST, "sign_post", "Sign Post", "oak_planks", "post", 0x9a6b36, { transparent: true, hardness: 0.8 }),
+  shapedBlock(BlockId.CHIMNEY, "chimney", "Chimney", "bricks", "post", 0x8d4d40, { hardness: 1.6 }),
 ];
 
 export class BlockRegistry {

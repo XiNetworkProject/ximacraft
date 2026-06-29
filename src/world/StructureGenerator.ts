@@ -2,7 +2,7 @@ import { CHUNK_SIZE, WORLD_HEIGHT } from "../utils/Constants";
 import { Noise } from "../utils/Noise";
 import { BlockId, isLeaves, isPlant } from "./BlockTypes";
 import { Chunk } from "./Chunk";
-import { BiomeId } from "./BiomeGenerator";
+import { BiomeId, isDryBiome, isForestBiome, isMountainBiome } from "./BiomeGenerator";
 
 type TreeSpecies = "oak" | "birch" | "spruce" | "dark_oak";
 type TreeShape = "young" | "standard" | "tall" | "large" | "giant" | "dead";
@@ -18,7 +18,16 @@ export class StructureGenerator {
   constructor(private readonly noise: Noise) {}
 
   shouldPlaceTree(x: number, z: number, biome: BiomeId): boolean {
-    const spacing = biome === "plains" ? 13 : biome === "hills" ? 9 : biome === "snow" ? 7 : 6;
+    const forest = isForestBiome(biome);
+    const spacing =
+      biome === "old_forest" || biome === "dark_forest" ? 8 :
+      forest ? 10 :
+      biome === "bocage" ? 18 :
+      biome === "hills" ? 14 :
+      biome === "snow" || biome === "tundra" ? 16 :
+      biome === "plains" || biome === "flower_meadow" ? 28 :
+      isDryBiome(biome) || isMountainBiome(biome) ? 34 :
+      24;
     const cellX = Math.floor(x / spacing);
     const cellZ = Math.floor(z / spacing);
     const jitterX = 1 + Math.floor(this.noise.random2D(cellX * 17 + 9, cellZ * 17 - 3) * Math.max(1, spacing - 2));
@@ -28,24 +37,27 @@ export class StructureGenerator {
     const grove = normalized(this.noise.fbm2D(x * 0.016 + 120, z * 0.016 - 80, 3));
     const clearing = normalized(this.noise.fbm2D(x * 0.007 - 240, z * 0.007 + 160, 3));
     let chance = 0;
-    if (biome === "forest") chance = 0.34 + grove * grove * 0.52;
-    else if (biome === "plains") chance = grove > 0.76 ? 0.24 : 0.055;
-    else if (biome === "hills") chance = 0.22 + grove * 0.34;
-    else if (biome === "snow") chance = 0.38 + grove * 0.26;
+    if (biome === "old_forest" || biome === "dark_forest") chance = 0.42 + grove * grove * 0.46;
+    else if (forest) chance = 0.22 + grove * grove * 0.42;
+    else if (biome === "bocage") chance = grove > 0.58 ? 0.18 : 0.045;
+    else if (biome === "plains" || biome === "flower_meadow") chance = grove > 0.8 ? 0.12 : 0.012;
+    else if (biome === "hills") chance = 0.12 + grove * 0.22;
+    else if (biome === "snow" || biome === "tundra") chance = 0.16 + grove * 0.16;
+    else if (isDryBiome(biome) || isMountainBiome(biome)) chance = grove > 0.86 ? 0.025 : 0;
     chance *= clearing > 0.76 ? 0.22 : 1;
     return chance > 0 && this.noise.random2D(cellX * 91 + 41, cellZ * 91 - 17) < chance;
   }
 
   shouldPlaceFallenLog(x: number, z: number, biome: BiomeId): boolean {
-    if (biome !== "forest" && biome !== "hills" && biome !== "plains") return false;
-    const spacing = biome === "forest" ? 10 : 16;
+    if (!isForestBiome(biome) && biome !== "hills" && biome !== "bocage" && biome !== "plains") return false;
+    const spacing = isForestBiome(biome) ? 14 : 24;
     const cellX = Math.floor(x / spacing);
     const cellZ = Math.floor(z / spacing);
     const anchorX = cellX * spacing + 2 + Math.floor(this.noise.random2D(cellX * 53, cellZ * 53 + 9) * Math.max(1, spacing - 4));
     const anchorZ = cellZ * spacing + 2 + Math.floor(this.noise.random2D(cellX * 59 - 7, cellZ * 59) * Math.max(1, spacing - 4));
     if (x !== anchorX || z !== anchorZ) return false;
     const oldWood = normalized(this.noise.fbm2D(x * 0.012 + 510, z * 0.012 - 330, 2));
-    const chance = biome === "forest" ? 0.22 + oldWood * 0.28 : oldWood > 0.76 ? 0.18 : 0.035;
+    const chance = biome === "old_forest" || biome === "dark_forest" ? 0.24 + oldWood * 0.3 : isForestBiome(biome) ? 0.12 + oldWood * 0.18 : oldWood > 0.82 ? 0.075 : 0.015;
     return this.noise.random2D(cellX * 47 - 11, cellZ * 47 + 23) < chance;
   }
 
@@ -106,18 +118,21 @@ export class StructureGenerator {
 
   private pickSpecies(chunk: Chunk, lx: number, baseY: number, lz: number, biome: BiomeId): TreeSpecies {
     const roll = this.noise.random3D(chunk.cx * 17 + lx, baseY, chunk.cz * 17 + lz);
-    if (biome === "snow") return roll < 0.86 ? "spruce" : "birch";
-    if (biome === "hills") return roll < 0.42 ? "spruce" : roll < 0.64 ? "birch" : roll > 0.92 ? "dark_oak" : "oak";
-    if (biome === "forest") return roll < 0.12 ? "birch" : roll < 0.38 ? "spruce" : roll > 0.82 ? "dark_oak" : "oak";
-    if (biome === "plains") return roll < 0.58 ? "birch" : "oak";
+    if (biome === "taiga" || biome === "pine_forest" || biome === "snow" || biome === "snow_forest" || biome === "tundra") return roll < 0.9 ? "spruce" : "birch";
+    if (biome === "birch_forest") return roll < 0.8 ? "birch" : "oak";
+    if (biome === "dark_forest") return roll < 0.62 ? "dark_oak" : roll < 0.8 ? "spruce" : "oak";
+    if (biome === "old_forest") return roll < 0.12 ? "birch" : roll < 0.34 ? "spruce" : roll > 0.72 ? "dark_oak" : "oak";
+    if (biome === "hills" || biome === "plateau") return roll < 0.48 ? "spruce" : roll < 0.68 ? "birch" : roll > 0.94 ? "dark_oak" : "oak";
+    if (isForestBiome(biome)) return roll < 0.16 ? "birch" : roll < 0.38 ? "spruce" : roll > 0.86 ? "dark_oak" : "oak";
+    if (biome === "plains" || biome === "flower_meadow" || biome === "bocage") return roll < 0.62 ? "birch" : "oak";
     return "oak";
   }
 
   private pickShape(chunk: Chunk, lx: number, baseY: number, lz: number, biome: BiomeId, species: TreeSpecies): TreeShape {
     const roll = this.noise.random3D(chunk.cx * 29 + lx, baseY + 11, chunk.cz * 29 + lz);
-    if ((biome === "forest" || biome === "hills") && roll < 0.035) return "dead";
-    if (biome === "forest" && roll > 0.945) return "giant";
-    if (biome === "forest" && roll > 0.76) return "large";
+    if ((isForestBiome(biome) || biome === "hills") && roll < 0.04) return "dead";
+    if ((biome === "old_forest" || biome === "dark_forest") && roll > 0.88) return "giant";
+    if (isForestBiome(biome) && roll > 0.79) return "large";
     if (biome === "hills" && roll > 0.86) return "large";
     if (roll < 0.13) return "young";
     if (roll > 0.64 || species === "spruce") return "tall";

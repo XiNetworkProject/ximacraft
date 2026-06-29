@@ -4,6 +4,7 @@ import { Noise } from "../utils/Noise";
 import { BlockId } from "./BlockTypes";
 import { Chunk } from "./Chunk";
 import { BiomeId } from "./BiomeGenerator";
+import { GroundCoverDensityMap, MicroBiomeResolver as EcoMicroBiomeResolver, VegetationPatchPlanner, VegetationRegionMap } from "./EcoResolver";
 
 export type MicroBiomeId =
   | "open_meadow"
@@ -29,7 +30,16 @@ export type PoiType =
   | "shipwreck";
 
 export class LivingWorldGenerator {
-  constructor(private readonly noise: Noise) {}
+  private readonly ecoMicro: EcoMicroBiomeResolver;
+  private readonly vegetationRegions: VegetationRegionMap;
+  private readonly densityMap = new GroundCoverDensityMap();
+  private readonly patchPlanner: VegetationPatchPlanner;
+
+  constructor(private readonly noise: Noise) {
+    this.ecoMicro = new EcoMicroBiomeResolver(noise);
+    this.vegetationRegions = new VegetationRegionMap(noise);
+    this.patchPlanner = new VegetationPatchPlanner(noise);
+  }
 
   sampleMicroBiome(x: number, z: number, biome: BiomeId, height: number): MicroBiomeId {
     const moisture = norm(this.noise.fbm2D(x * 0.012 + 900, z * 0.012 - 330, 3));
@@ -58,50 +68,12 @@ export class LivingWorldGenerator {
   }
 
   decorativePlant(x: number, z: number, height: number, biome: BiomeId): BlockId {
-    if (height <= SEA_LEVEL + 2 || biome === "beach" || biome === "snow" || biome === "mountains") return BlockId.AIR;
-    const micro = this.sampleMicroBiome(x, z, biome, height);
-    const roll = this.noise.random2D(x * 97, z * 97);
-    const accent = this.noise.random2D(x * 193 + 17, z * 193 - 31);
-
-    if (biome === "desert") {
-      if (micro === "oasis" && roll < 0.16) return accent < 0.55 ? BlockId.SHORT_GRASS : BlockId.REEDS;
-      return BlockId.AIR;
-    }
-    if (micro === "wetland") {
-      if (roll < 0.14) return BlockId.REEDS;
-      if (roll < 0.25) return accent < 0.6 ? BlockId.FERN : BlockId.SHORT_GRASS;
-      if (roll < 0.3) return BlockId.BLUE_FLOWER;
-      return BlockId.AIR;
-    }
-    if (micro === "fern_understory") {
-      if (roll < 0.28) return accent < 0.72 ? BlockId.FERN : BlockId.WILD_BUSH;
-      if (roll < 0.33) return BlockId.MOSS_CARPET;
-      return BlockId.AIR;
-    }
-    if (micro === "flower_field") {
-      if (roll < 0.34) {
-        if (accent < 0.28) return BlockId.DANDELION;
-        if (accent < 0.55) return BlockId.POPPY;
-        if (accent < 0.76) return BlockId.BLUE_FLOWER;
-        return BlockId.WHITE_FLOWER;
-      }
-      if (roll < 0.58) return accent < 0.8 ? BlockId.TALL_GRASS : BlockId.SHORT_GRASS;
-      return BlockId.AIR;
-    }
-    if (micro === "deadwood") {
-      if (roll < 0.11) return BlockId.WILD_BUSH;
-      if (roll < 0.2) return BlockId.FERN;
-      if (roll < 0.235) return BlockId.MOSS_CARPET;
-      return BlockId.AIR;
-    }
-    if (micro === "boulder_field" || micro === "rocky_slope") {
-      if (roll < 0.08) return BlockId.SHORT_GRASS;
-      if (roll < 0.11) return BlockId.MOSS_CARPET;
-      return BlockId.AIR;
-    }
-    if (roll < 0.22) return accent < 0.62 ? BlockId.SHORT_GRASS : BlockId.TALL_GRASS;
-    if (roll < 0.27) return accent < 0.48 ? BlockId.DANDELION : BlockId.WHITE_FLOWER;
-    return BlockId.AIR;
+    if (height <= SEA_LEVEL + 1) return BlockId.AIR;
+    const micro = this.ecoMicro.resolve(x, z, biome, height);
+    const region = this.vegetationRegions.sample(x, z);
+    const canopyLight = (biome === "forest" || biome === "old_forest" || biome === "dark_forest") && region.oldGrowth > 0.55 ? 0.55 : 1;
+    const density = this.densityMap.densityFor(biome, micro, canopyLight);
+    return this.patchPlanner.decorativePlant(x, z, biome, micro, density, region);
   }
 
   decorateColumn(chunk: Chunk, lx: number, height: number, lz: number, biome: BiomeId): void {
@@ -112,11 +84,11 @@ export class LivingWorldGenerator {
 
     if (this.isNearWater(chunk, lx, height, lz)) {
       const roll = this.noise.random2D(x * 131 + 7, z * 131 - 7);
-      if (roll < 0.1 && chunk.getLocal(lx, height + 1, lz) === BlockId.AIR) {
+      if (roll < 0.045 && chunk.getLocal(lx, height + 1, lz) === BlockId.AIR) {
         chunk.setLocal(lx, height + 1, lz, biome === "desert" ? BlockId.SHORT_GRASS : BlockId.REEDS);
       }
-      if (roll > 0.88) this.placeLilyPadNear(chunk, lx, height, lz);
-      if (roll > 0.78 && roll < 0.83 && biome !== "desert") chunk.setLocal(lx, height, lz, BlockId.MUD);
+      if (roll > 0.955) this.placeLilyPadNear(chunk, lx, height, lz);
+      if (roll > 0.84 && roll < 0.88 && biome !== "desert") chunk.setLocal(lx, height, lz, BlockId.MUD);
     }
 
     if ((micro === "boulder_field" || micro === "rocky_slope") && this.noise.random2D(x * 73, z * 73) < 0.035) {
@@ -124,9 +96,6 @@ export class LivingWorldGenerator {
     }
     if (micro === "deadwood" && this.noise.random2D(x * 89 - 5, z * 89 + 5) < 0.025) {
       this.placeDeadBranchPile(chunk, lx, height, lz);
-    }
-    if (this.noise.random2D(x * 43 + 11, z * 43 - 11) < this.trackChance(biome, micro)) {
-      this.setIfAir(chunk, lx, height + 1, lz, BlockId.ANIMAL_TRACKS);
     }
   }
 
@@ -220,7 +189,7 @@ export class LivingWorldGenerator {
     this.set(chunk, lx + 2, y + 1, lz, BlockId.OAK_LOG_X);
     this.set(chunk, lx, y + 1, lz - 2, BlockId.OAK_LOG_Z);
     this.set(chunk, lx, y + 1, lz + 2, BlockId.OAK_LOG_Z);
-    for (let i = 0; i < 5; i += 1) this.setIfAir(chunk, lx - 2 + i, y + 1, lz + 3, BlockId.ANIMAL_TRACKS);
+    for (let i = 0; i < 5; i += 1) this.setIfAir(chunk, lx - 2 + i, y + 1, lz + 3, BlockId.DIRT_PATH);
   }
 
   private placeMineMouth(chunk: Chunk, lx: number, y: number, lz: number): void {
@@ -294,14 +263,6 @@ export class LivingWorldGenerator {
       if (chunk.getLocal(x, y, z) === BlockId.WATER || chunk.getLocal(x, y - 1, z) === BlockId.WATER) return true;
     }
     return false;
-  }
-
-  private trackChance(biome: BiomeId, micro: MicroBiomeId): number {
-    if (biome === "desert" || biome === "beach") return 0.008;
-    if (biome === "forest" || micro === "fern_understory") return 0.006;
-    if (micro === "wetland") return 0.005;
-    if (biome === "plains" || micro === "open_meadow") return 0.004;
-    return 0.002;
   }
 
   private setIfAir(chunk: Chunk, lx: number, y: number, lz: number, block: BlockId): void {

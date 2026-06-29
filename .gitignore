@@ -1,5 +1,6 @@
 node_modules/
 dist/
+*.tsbuildinfo
 vite-dev.log
 vite-dev.err.log
 .DS_Store

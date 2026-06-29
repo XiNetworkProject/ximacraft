@@ -6,6 +6,9 @@ import { BlockRegistry } from "./BlockRegistry";
 import { BlockFace, BlockId, isPlant, isSnowLayer, snowLayerLevel } from "./BlockTypes";
 import { Chunk } from "./Chunk";
 import { World } from "./World";
+import { BlockConnectionState, NO_CONNECTIONS } from "./BlockConnections";
+import { BlockGeometryBuilder, GeometryBox } from "./BlockGeometryBuilder";
+import { BlockShape, isConnectedShape } from "./blockstate/BlockShape";
 
 type FaceBuild = {
   name: BlockFace;
@@ -75,6 +78,20 @@ export class ChunkMesher {
             continue;
           }
 
+          const shape = this.shapeFor(block);
+          const connections = isConnectedShape(shape) ? this.connectionStateFor(originX + x, y, originZ + z, shape) : NO_CONNECTIONS;
+          const boxes = BlockGeometryBuilder.boxesFor(shape, connections, block.renderHeight ?? 1);
+          for (const box of boxes) {
+            for (const face of FACES) {
+              if (!this.shouldRenderBoxFace(originX + x, y, originZ + z, box, face, blockId, !!(block.transparent || block.liquid))) {
+                continue;
+              }
+              const textureName = this.blockRegistry.getTextureForFace(blockId, face.name);
+              this.pushBoxFace(target, originX + x, y, originZ + z, box, face, textureName, blockId);
+            }
+          }
+          continue;
+
           for (const face of FACES) {
             const nx = originX + x + face.dir[0];
             const ny = y + face.dir[1];
@@ -131,6 +148,117 @@ export class ChunkMesher {
       return false;
     }
     return neighborTransparent || !this.blockRegistry.isOpaque(neighborId);
+  }
+
+  private shouldRenderBoxFace(
+    x: number,
+    y: number,
+    z: number,
+    box: GeometryBox,
+    face: FaceBuild,
+    blockId: BlockId,
+    currentTransparent: boolean,
+  ): boolean {
+    const boundary = this.isBoxBoundaryFace(box, face.name);
+    if (!boundary) return true;
+    const nx = x + face.dir[0];
+    const ny = y + face.dir[1];
+    const nz = z + face.dir[2];
+    if (blockId === BlockId.WATER && face.name !== "top" && !this.world.getChunk(worldToChunk(nx), worldToChunk(nz))) {
+      return false;
+    }
+    const neighborId = this.world.getBlock(nx, ny, nz);
+    const neighbor = this.blockRegistry.get(neighborId);
+    return this.shouldRenderFace(blockId, neighborId, face.name, currentTransparent, !!(neighbor.transparent || neighbor.liquid));
+  }
+
+  private isBoxBoundaryFace(box: GeometryBox, face: BlockFace): boolean {
+    switch (face) {
+      case "top":
+        return box.maxY >= 0.999;
+      case "bottom":
+        return box.minY <= 0.001;
+      case "north":
+        return box.minZ <= 0.001;
+      case "south":
+        return box.maxZ >= 0.999;
+      case "east":
+        return box.maxX >= 0.999;
+      case "west":
+        return box.minX <= 0.001;
+    }
+  }
+
+  private shapeFor(block: ReturnType<BlockRegistry["get"]>): BlockShape {
+    if (block.shape) return block.shape;
+    if (block.renderHeight !== undefined) return "cube";
+    return "cube";
+  }
+
+  private connectionStateFor(x: number, y: number, z: number, shape: BlockShape): BlockConnectionState {
+    return {
+      north: this.connectsTo(x, y, z - 1, shape),
+      south: this.connectsTo(x, y, z + 1, shape),
+      east: this.connectsTo(x + 1, y, z, shape),
+      west: this.connectsTo(x - 1, y, z, shape),
+    };
+  }
+
+  private connectsTo(x: number, y: number, z: number, shape: BlockShape): boolean {
+    const neighborId = this.world.getBlock(x, y, z);
+    if (neighborId === BlockId.AIR || neighborId === BlockId.WATER) return false;
+    const neighbor = this.blockRegistry.get(neighborId);
+    if (shape === "pane") return neighbor.shape === "pane" || this.blockRegistry.isOpaque(neighborId);
+    if (shape === "fence") return neighbor.shape === "fence" || neighbor.shape === "wall" || this.blockRegistry.isOpaque(neighborId);
+    if (shape === "wall") return neighbor.shape === "wall" || neighbor.shape === "fence" || this.blockRegistry.isOpaque(neighborId);
+    return false;
+  }
+
+  private pushBoxFace(
+    buffers: MeshBuffers,
+    x: number,
+    y: number,
+    z: number,
+    box: GeometryBox,
+    face: FaceBuild,
+    textureName: string,
+    blockId: BlockId,
+  ): void {
+    const baseIndex = buffers.positions.length / 3;
+    const uv = this.atlas.getUv(textureName);
+    const color = this.faceColor(blockId, face.name, x, y, z);
+    const liquid = blockId === BlockId.WATER;
+    const depth = liquid ? this.waterDepthAt(x, y, z) : 0;
+    const windWeight = this.blockWindWeight(blockId);
+
+    const ao = [1, 1, 1, 1];
+    if (!liquid) {
+      for (let i = 0; i < 4; i += 1) {
+        const corner = face.corners[i];
+        ao[i] = AO_BRIGHTNESS[this.cornerAO(face.normal, corner, x, y, z)];
+      }
+    }
+
+    for (let i = 0; i < 4; i += 1) {
+      const corner = face.corners[i];
+      buffers.positions.push(
+        x + (corner[0] === 1 ? box.maxX : box.minX),
+        y + (corner[1] === 1 ? box.maxY : box.minY),
+        z + (corner[2] === 1 ? box.maxZ : box.minZ),
+      );
+      buffers.normals.push(face.normal[0], face.normal[1], face.normal[2]);
+      const a = ao[i];
+      buffers.colors.push(color.r * a, color.g * a, color.b * a);
+      buffers.windWeights.push(windWeight);
+      buffers.waterDepths.push(depth);
+    }
+
+    buffers.uvs.push(uv.u0, uv.v0, uv.u1, uv.v0, uv.u1, uv.v1, uv.u0, uv.v1);
+    if (ao[0] + ao[2] > ao[1] + ao[3]) {
+      buffers.indices.push(baseIndex, baseIndex + 1, baseIndex + 2, baseIndex, baseIndex + 2, baseIndex + 3);
+    } else {
+      buffers.indices.push(baseIndex + 1, baseIndex + 2, baseIndex + 3, baseIndex + 1, baseIndex + 3, baseIndex);
+    }
   }
 
   private pushFace(
@@ -381,14 +509,41 @@ export class ChunkMesher {
     const biome = this.world.getBiomeAt(x, z);
     switch (biome.id) {
       case "forest":
+      case "young_forest":
+      case "old_forest":
+      case "birch_forest":
         return new THREE.Color(0x63b84d);
+      case "dark_forest":
+        return new THREE.Color(0x4f8f3e);
+      case "pine_forest":
+      case "taiga":
+      case "snow_forest":
+        return new THREE.Color(0x6fa96a);
+      case "flower_meadow":
+        return new THREE.Color(0x79c45a);
+      case "dry_prairie":
+      case "bocage":
+        return new THREE.Color(0x88b95e);
+      case "marsh":
+      case "bog":
+      case "riverbank":
+        return new THREE.Color(0x5fa85a);
       case "hills":
+      case "plateau":
         return new THREE.Color(0x78b85a);
       case "mountains":
+      case "alpine_mountain":
+      case "cliffs":
         return new THREE.Color(0x8cae6b);
       case "snow":
+      case "tundra":
+      case "glacial_valley":
+      case "high_mountain":
         return new THREE.Color(0xb9cfa6);
       case "desert":
+      case "dunes":
+      case "rocky_desert":
+      case "canyon":
       case "beach":
         return new THREE.Color(0xb9b66b);
       default:
@@ -399,15 +554,32 @@ export class ChunkMesher {
   private foliageTint(x: number, z: number, birch: boolean): THREE.Color {
     const biome = this.world.getBiomeAt(x, z);
     if (birch) {
-      return new THREE.Color(biome.id === "snow" ? 0xaecb76 : 0x94c95f);
+      return new THREE.Color(biome.id === "snow" || biome.id === "snow_forest" || biome.id === "tundra" ? 0xaecb76 : 0x94c95f);
     }
     switch (biome.id) {
       case "forest":
+      case "young_forest":
+      case "old_forest":
+      case "birch_forest":
         return new THREE.Color(0x4fa83f);
       case "snow":
+      case "snow_forest":
+      case "tundra":
+      case "glacial_valley":
         return new THREE.Color(0x789b62);
+      case "dark_forest":
+        return new THREE.Color(0x2f6e36);
+      case "pine_forest":
+      case "taiga":
+        return new THREE.Color(0x4f8060);
+      case "marsh":
+      case "bog":
+        return new THREE.Color(0x4b8d4c);
       case "hills":
       case "mountains":
+      case "plateau":
+      case "alpine_mountain":
+      case "cliffs":
         return new THREE.Color(0x5f9f48);
       default:
         return new THREE.Color(0x59b143);

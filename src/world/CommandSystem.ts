@@ -20,6 +20,8 @@ import { SeasonSystem, SeasonId } from "../living/SeasonSystem";
 import { AmbientBiomeAudioSystem } from "../living/AmbientBiomeAudioSystem";
 import { WorldMemorySystem } from "../living/WorldMemorySystem";
 import { WildlifeSpecies } from "../living/LivingWorldTypes";
+import { CHUNK_SIZE, WORLD_HEIGHT } from "../utils/Constants";
+import { BlockId, isLegacyTrack, isPlant } from "./BlockTypes";
 
 export type CommandContext = {
   time: Time;
@@ -132,6 +134,17 @@ export const COMMANDS: CommandDefinition[] = [
   { usage: "/renderdistance 2-16", prefix: "/renderdistance", description: "Set chunk render distance." },
   { usage: "/quality low|balanced|high", prefix: "/quality", description: "Switch performance/visual preset." },
   { usage: "/world regen loaded", prefix: "/world regen loaded", description: "Regenerate loaded terrain chunks with the current generator." },
+  { usage: "/world cleanup generated-tracks", prefix: "/world cleanup generated-tracks", description: "Remove legacy generated track blocks from loaded chunks and saves." },
+  { usage: "/world regenerate-decoration", prefix: "/world regenerate-decoration", description: "Clean legacy tracks and regenerate loaded chunk decoration." },
+  { usage: "/world debug decorations", prefix: "/world debug decorations", description: "Inspect plants, legacy tracks and natural decorations in loaded chunks." },
+  { usage: "/build debug palette", prefix: "/build debug palette", description: "Place a compact palette of new non-cube block shapes." },
+  { usage: "/build debug stairs", prefix: "/build debug stairs", description: "Place oriented stair variants." },
+  { usage: "/build debug fences", prefix: "/build debug fences", description: "Place auto-connected fence variants." },
+  { usage: "/build debug walls", prefix: "/build debug walls", description: "Place auto-connected wall variants." },
+  { usage: "/build debug roof", prefix: "/build debug roof", description: "Place sloped roof variants." },
+  { usage: "/build debug house", prefix: "/build debug house", description: "Build a small house using slabs, stairs, door, pane and roof shapes." },
+  { usage: "/build debug bridge", prefix: "/build debug bridge", description: "Build a small bridge with slabs, fences and lanterns." },
+  { usage: "/build debug village", prefix: "/build debug village", description: "Build a small village prototype block-out." },
   { usage: "/living debug", prefix: "/living debug", description: "Inspect living world fauna, ambience and activity." },
   { usage: "/living fauna on|off|all|bird|butterfly|dragonfly|firefly|rabbit|deer|fish|frog|bat", prefix: "/living fauna", description: "Toggle or force wildlife for testing." },
   { usage: "/living traces", prefix: "/living traces", description: "Inspect world memory/traces state." },
@@ -319,6 +332,9 @@ export class CommandSystem {
         case "world":
           this.executeWorld(parts);
           break;
+        case "build":
+          this.executeBuild(parts);
+          break;
         case "living":
           this.executeLiving(parts);
           break;
@@ -500,7 +516,209 @@ export class CommandSystem {
       this.write(`Regenerated ${count} loaded chunk(s).`);
       return;
     }
-    this.write("Usage: /world regen loaded");
+    if (parts[1] === "cleanup" && parts[2] === "generated-tracks") {
+      const removed = this.context!.worldMemory?.cleanupGeneratedTrackBlocks(this.context!.world) ?? this.cleanupLegacyTracksFallback();
+      this.write(`Removed ${removed} legacy generated track block(s) from loaded chunks.`);
+      return;
+    }
+    if (parts[1] === "regenerate-decoration") {
+      const removed = this.context!.worldMemory?.cleanupGeneratedTrackBlocks(this.context!.world) ?? this.cleanupLegacyTracksFallback();
+      const regenerated = this.context!.world.regenerateLoadedChunks();
+      this.write(`Cleaned ${removed} legacy track block(s), regenerated ${regenerated} loaded chunk(s).`);
+      return;
+    }
+    if (parts[1] === "debug" && parts[2] === "decorations") {
+      this.write(this.debugDecorationSummary());
+      return;
+    }
+    this.write("Usage: /world regen loaded | /world cleanup generated-tracks | /world regenerate-decoration | /world debug decorations");
+  }
+
+  private executeBuild(parts: string[]): void {
+    if (parts[1] !== "debug") {
+      this.write("Usage: /build debug palette|stairs|fences|walls|roof|house|bridge|village");
+      return;
+    }
+    const kind = parts[2] ?? "palette";
+    const origin = this.demoOrigin();
+    switch (kind) {
+      case "palette":
+        this.placePalette(origin.x, origin.y, origin.z);
+        break;
+      case "stairs":
+        this.placeLine(origin.x, origin.y, origin.z, [
+          BlockId.OAK_STAIRS_NORTH,
+          BlockId.OAK_STAIRS_SOUTH,
+          BlockId.OAK_STAIRS_EAST,
+          BlockId.OAK_STAIRS_WEST,
+          BlockId.COBBLESTONE_STAIRS_NORTH,
+          BlockId.COBBLESTONE_STAIRS_SOUTH,
+          BlockId.STONE_BRICK_STAIRS_EAST,
+          BlockId.STONE_BRICK_STAIRS_WEST,
+        ]);
+        break;
+      case "fences":
+        this.placeFenceDemo(origin.x, origin.y, origin.z);
+        break;
+      case "walls":
+        this.placeWallDemo(origin.x, origin.y, origin.z);
+        break;
+      case "roof":
+        this.placeRoofDemo(origin.x, origin.y, origin.z);
+        break;
+      case "house":
+        this.placeHouseDemo(origin.x, origin.y, origin.z);
+        break;
+      case "bridge":
+        this.placeBridgeDemo(origin.x, origin.y, origin.z);
+        break;
+      case "village":
+        this.placeVillageDemo(origin.x, origin.y, origin.z);
+        break;
+      default:
+        this.write("Usage: /build debug palette|stairs|fences|walls|roof|house|bridge|village");
+        return;
+    }
+    this.write(`Placed build debug ${kind} at ${origin.x} ${origin.y} ${origin.z}.`);
+  }
+
+  private cleanupLegacyTracksFallback(): number {
+    let removed = 0;
+    const world = this.context!.world;
+    for (const chunk of world.chunks.values()) {
+      let chunkRemoved = false;
+      for (let y = 0; y < WORLD_HEIGHT; y += 1) {
+        for (let z = 0; z < CHUNK_SIZE; z += 1) {
+          for (let x = 0; x < CHUNK_SIZE; x += 1) {
+            if (isLegacyTrack(chunk.getLocal(x, y, z))) {
+              chunk.setLocal(x, y, z, BlockId.AIR);
+              chunkRemoved = true;
+              removed += 1;
+            }
+          }
+        }
+      }
+      if (chunkRemoved) chunk.dirty = true;
+    }
+    for (const [key, blockId] of world.blockChanges.entries()) {
+      if (isLegacyTrack(blockId)) world.blockChanges.delete(key);
+    }
+    return removed;
+  }
+
+  private debugDecorationSummary(): string {
+    let plants = 0;
+    let legacyTracks = 0;
+    let reeds = 0;
+    let carpets = 0;
+    let waterPlants = 0;
+    let poiBlocks = 0;
+    for (const chunk of this.context!.world.chunks.values()) {
+      for (let y = 0; y < WORLD_HEIGHT; y += 1) {
+        for (let z = 0; z < CHUNK_SIZE; z += 1) {
+          for (let x = 0; x < CHUNK_SIZE; x += 1) {
+            const block = chunk.getLocal(x, y, z);
+            if (isPlant(block)) plants += 1;
+            if (isLegacyTrack(block)) legacyTracks += 1;
+            if (block === BlockId.REEDS) reeds += 1;
+            if (block === BlockId.MOSS_CARPET) carpets += 1;
+            if (block === BlockId.LILY_PAD) waterPlants += 1;
+            if (block === BlockId.CAMPFIRE || block === BlockId.WEATHERED_BEAM || block === BlockId.WEATHERED_PLANKS) poiBlocks += 1;
+          }
+        }
+      }
+    }
+    return `Decorations loaded chunks=${this.context!.world.chunks.size} plants=${plants} reeds=${reeds} moss=${carpets} lily=${waterPlants} poiBlocks=${poiBlocks} legacyTracks=${legacyTracks}`;
+  }
+
+  private demoOrigin(): { x: number; y: number; z: number } {
+    const player = this.context!.player.position;
+    const x = Math.floor(player.x) + 4;
+    const z = Math.floor(player.z) + 4;
+    return { x, y: this.context!.world.getSurfaceHeight(x, z) + 1, z };
+  }
+
+  private placeLine(x: number, y: number, z: number, blocks: BlockId[]): void {
+    blocks.forEach((block, index) => this.context!.world.setBlock(x + index, y, z, block));
+  }
+
+  private placePalette(x: number, y: number, z: number): void {
+    const rows: BlockId[][] = [
+      [BlockId.OAK_SLAB, BlockId.OAK_SLAB_TOP, BlockId.OAK_STAIRS_NORTH, BlockId.OAK_FENCE, BlockId.OAK_DOOR_NORTH, BlockId.GLASS_PANE],
+      [BlockId.COBBLESTONE_SLAB, BlockId.COBBLESTONE_STAIRS_EAST, BlockId.COBBLESTONE_WALL, BlockId.MOSSY_COBBLESTONE_WALL, BlockId.STONE_BRICK_WALL],
+      [BlockId.WEATHERED_ROOF_NORTH, BlockId.WEATHERED_ROOF_SOUTH, BlockId.LANTERN_POST, BlockId.HANGING_LANTERN, BlockId.DIRT_PATH, BlockId.GRAVEL_PATH],
+    ];
+    rows.forEach((row, dz) => row.forEach((block, dx) => this.context!.world.setBlock(x + dx, y, z + dz, block)));
+  }
+
+  private placeFenceDemo(x: number, y: number, z: number): void {
+    for (let i = 0; i < 7; i += 1) {
+      this.context!.world.setBlock(x + i, y, z, BlockId.OAK_FENCE);
+      this.context!.world.setBlock(x + 3, y, z + i - 3, BlockId.OAK_FENCE);
+    }
+    this.context!.world.setBlock(x + 3, y + 1, z, BlockId.LANTERN_POST);
+  }
+
+  private placeWallDemo(x: number, y: number, z: number): void {
+    for (let i = 0; i < 7; i += 1) {
+      this.context!.world.setBlock(x + i, y, z, i % 2 === 0 ? BlockId.COBBLESTONE_WALL : BlockId.MOSSY_COBBLESTONE_WALL);
+      this.context!.world.setBlock(x + 3, y, z + i - 3, BlockId.STONE_BRICK_WALL);
+    }
+  }
+
+  private placeRoofDemo(x: number, y: number, z: number): void {
+    for (let i = 0; i < 7; i += 1) {
+      this.context!.world.setBlock(x + i, y, z, BlockId.WEATHERED_ROOF_NORTH);
+      this.context!.world.setBlock(x + i, y, z + 1, BlockId.WEATHERED_ROOF_SOUTH);
+      this.context!.world.setBlock(x + i, y + 1, z + 2, BlockId.WEATHERED_ROOF_NORTH);
+      this.context!.world.setBlock(x + i, y + 1, z + 3, BlockId.WEATHERED_ROOF_SOUTH);
+    }
+  }
+
+  private placeHouseDemo(x: number, y: number, z: number): void {
+    for (let dx = 0; dx < 7; dx += 1) {
+      for (let dz = 0; dz < 6; dz += 1) {
+        this.context!.world.setBlock(x + dx, y - 1, z + dz, BlockId.WEATHERED_PLANKS);
+        const edge = dx === 0 || dz === 0 || dx === 6 || dz === 5;
+        for (let dy = 0; dy < 3; dy += 1) {
+          this.context!.world.setBlock(x + dx, y + dy, z + dz, edge ? BlockId.WEATHERED_BEAM : BlockId.AIR);
+        }
+      }
+    }
+    this.context!.world.setBlock(x + 3, y, z, BlockId.OAK_DOOR_NORTH);
+    this.context!.world.setBlock(x + 1, y + 1, z, BlockId.GLASS_PANE);
+    this.context!.world.setBlock(x + 5, y + 1, z, BlockId.GLASS_PANE);
+    this.context!.world.setBlock(x + 1, y + 1, z + 5, BlockId.GLASS_PANE);
+    this.context!.world.setBlock(x + 5, y + 1, z + 5, BlockId.GLASS_PANE);
+    for (let dx = -1; dx <= 7; dx += 1) {
+      this.context!.world.setBlock(x + dx, y + 3, z - 1, BlockId.WEATHERED_ROOF_NORTH);
+      this.context!.world.setBlock(x + dx, y + 3, z + 6, BlockId.WEATHERED_ROOF_SOUTH);
+      this.context!.world.setBlock(x + dx, y + 4, z + 1, BlockId.WEATHERED_ROOF_NORTH);
+      this.context!.world.setBlock(x + dx, y + 4, z + 4, BlockId.WEATHERED_ROOF_SOUTH);
+    }
+    this.context!.world.setBlock(x + 5, y + 5, z + 3, BlockId.CHIMNEY);
+  }
+
+  private placeBridgeDemo(x: number, y: number, z: number): void {
+    for (let i = 0; i < 12; i += 1) {
+      this.context!.world.setBlock(x + i, y, z, BlockId.OAK_SLAB);
+      this.context!.world.setBlock(x + i, y, z + 1, BlockId.OAK_SLAB);
+      if (i % 2 === 0) {
+        this.context!.world.setBlock(x + i, y + 1, z - 1, BlockId.OAK_FENCE);
+        this.context!.world.setBlock(x + i, y + 1, z + 2, BlockId.OAK_FENCE);
+      }
+    }
+    this.context!.world.setBlock(x + 1, y + 2, z - 1, BlockId.LANTERN_POST);
+    this.context!.world.setBlock(x + 10, y + 2, z + 2, BlockId.LANTERN_POST);
+  }
+
+  private placeVillageDemo(x: number, y: number, z: number): void {
+    this.placeHouseDemo(x, y, z);
+    this.placeHouseDemo(x + 12, y, z + 8);
+    this.placeBridgeDemo(x + 2, y, z + 15);
+    for (let i = 0; i < 22; i += 1) {
+      this.context!.world.setBlock(x + i, y - 1, z + 7, i % 4 === 0 ? BlockId.GRAVEL_PATH : BlockId.DIRT_PATH);
+    }
   }
 
   private executeLiving(parts: string[]): void {
