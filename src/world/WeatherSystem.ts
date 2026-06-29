@@ -98,6 +98,7 @@ export class WeatherSystem {
   private readonly snowCoverStrength: Float32Array;
   private readonly lightningLight = new THREE.PointLight(0xaed4ff, 0, 260);
   readonly rainbowGroup = new THREE.Group();
+  private rainbowMaterialRef: THREE.ShaderMaterial | null = null;
   onThunder: ((delaySeconds: number, power: number) => void) | null = null;
   private autoTimer = 12;
   private manualOverrideRemaining = 0;
@@ -362,20 +363,15 @@ export class WeatherSystem {
   }
 
   setRainbowPose(oppositeSun: THREE.Vector3, sunHeight: number): void {
-    const horizontal = new THREE.Vector3(oppositeSun.x, 0, oppositeSun.z);
-    if (horizontal.lengthSq() < 0.001) {
-      horizontal.set(0, 0, -1);
+    void sunHeight; // l'arc se place géométriquement (point antisolaire), pas par hauteur.
+    if (!this.rainbowMaterialRef) return;
+    const antisolar = this.rainbowMaterialRef.uniforms.uAntisolar.value as THREE.Vector3;
+    antisolar.copy(oppositeSun);
+    if (antisolar.lengthSq() < 0.0001) {
+      antisolar.set(0, -1, 0);
     } else {
-      horizontal.normalize();
+      antisolar.normalize();
     }
-    const lowSunBoost = clamp(1 - sunHeight * 2.8, 0, 1);
-    const distance = 190 + lowSunBoost * 88;
-    const baseY = 42 + lowSunBoost * 34;
-    this.rainbowGroup.children.forEach((child, index) => {
-      child.position.set(horizontal.x * (distance + index * 14), baseY + index * 8, horizontal.z * (distance + index * 14));
-      const sprite = child as THREE.Sprite;
-      sprite.scale.set(250 + index * 30, 128 + index * 16, 1);
-    });
   }
 
   setIntensity(type: WeatherType, intensity: number): void {
@@ -462,7 +458,7 @@ export class WeatherSystem {
         const material = child.material as THREE.SpriteMaterial;
         material.map?.dispose();
         material.dispose();
-      } else if (child instanceof THREE.Line) {
+      } else if (child instanceof THREE.Mesh || child instanceof THREE.Line) {
         child.geometry.dispose();
         (child.material as THREE.Material).dispose();
       }
@@ -1084,115 +1080,73 @@ export class WeatherSystem {
   private updateRainbow(delta: number, dayFactor: number): void {
     const desired = dayFactor > 0.35 ? Math.max(this.current === "rainbow" ? 1 : 0, this.regionalRainbowSignal) : 0;
     this.rainbowPower = lerp(this.rainbowPower, desired, Math.min(1, delta * 0.35));
-    this.rainbowGroup.visible = this.rainbowPower > 0.03;
-    this.rainbowGroup.children.forEach((child, index) => {
-      const material = (child as THREE.Sprite).material as THREE.SpriteMaterial;
-      const secondary = index === 1;
-      const glow = index === 2;
-      material.opacity = this.rainbowPower * (secondary ? 0.22 : glow ? 0.18 : 0.58);
-    });
+    this.rainbowGroup.visible = this.rainbowPower > 0.01;
+    if (this.rainbowMaterialRef) {
+      this.rainbowMaterialRef.uniforms.uIntensity.value = this.rainbowPower;
+    }
   }
 
   private createRainbow(): void {
-    const texture = new THREE.CanvasTexture(this.createRainbowTexture(false));
-    const secondaryTexture = new THREE.CanvasTexture(this.createRainbowTexture(true));
-    const glowTexture = new THREE.CanvasTexture(this.createRainbowGlowTexture());
-    for (const tex of [texture, secondaryTexture, glowTexture]) {
-      tex.magFilter = THREE.LinearFilter;
-      tex.minFilter = THREE.LinearFilter;
-    }
-    const sprites = [
-      new THREE.Sprite(this.rainbowMaterial(texture)),
-      new THREE.Sprite(this.rainbowMaterial(secondaryTexture)),
-      new THREE.Sprite(this.rainbowMaterial(glowTexture)),
-    ];
-    sprites.forEach((sprite, index) => {
-      sprite.position.set(0, 60 + index * 8, -190 - index * 14);
-      sprite.scale.set(250 + index * 30, 128 + index * 16, 1);
-      sprite.frustumCulled = false;
-      this.rainbowGroup.add(sprite);
-    });
-  }
-
-  private createRainbowTexture(secondary: boolean): HTMLCanvasElement {
-    const canvas = document.createElement("canvas");
-    canvas.width = 1024;
-    canvas.height = 512;
-    const context = canvas.getContext("2d")!;
-    context.clearRect(0, 0, canvas.width, canvas.height);
-    context.lineCap = "round";
-    context.globalCompositeOperation = "lighter";
-    context.shadowColor = "rgba(255,255,255,0.18)";
-    context.shadowBlur = secondary ? 14 : 22;
-
-    const bands = secondary
-      ? [
-          "rgba(165, 92, 255, 0.18)",
-          "rgba(90, 130, 255, 0.17)",
-          "rgba(80, 200, 255, 0.16)",
-          "rgba(105, 225, 120, 0.15)",
-          "rgba(255, 232, 90, 0.14)",
-          "rgba(255, 150, 60, 0.13)",
-          "rgba(255, 70, 80, 0.12)",
-        ]
-      : [
-          "rgba(255, 70, 80, 0.52)",
-          "rgba(255, 145, 48, 0.43)",
-          "rgba(255, 228, 84, 0.39)",
-          "rgba(95, 220, 112, 0.34)",
-          "rgba(78, 188, 255, 0.31)",
-          "rgba(112, 124, 255, 0.27)",
-          "rgba(184, 92, 255, 0.24)",
-        ];
-    const radius = secondary ? 384 : 330;
-    const lineWidth = secondary ? 14 : 18;
-    bands.forEach((color, index) => {
-      context.strokeStyle = color;
-      context.lineWidth = lineWidth;
-      context.beginPath();
-      context.arc(512, 500, radius - index * (secondary ? 13 : 17), Math.PI * 1.06, Math.PI * 1.94, false);
-      context.stroke();
-    });
-
-    context.shadowBlur = 0;
-    context.globalCompositeOperation = "destination-in";
-    const fade = context.createLinearGradient(0, 0, 0, canvas.height);
-    fade.addColorStop(0, "rgba(255,255,255,0)");
-    fade.addColorStop(0.18, "rgba(255,255,255,0.04)");
-    fade.addColorStop(0.44, "rgba(255,255,255,0.9)");
-    fade.addColorStop(0.86, "rgba(255,255,255,0.25)");
-    fade.addColorStop(1, "rgba(255,255,255,0)");
-    context.fillStyle = fade;
-    context.fillRect(0, 0, canvas.width, canvas.height);
-    return canvas;
-  }
-
-  private createRainbowGlowTexture(): HTMLCanvasElement {
-    const canvas = document.createElement("canvas");
-    canvas.width = 1024;
-    canvas.height = 512;
-    const context = canvas.getContext("2d")!;
-    context.clearRect(0, 0, canvas.width, canvas.height);
-    const gradient = context.createRadialGradient(512, 500, 250, 512, 500, 460);
-    gradient.addColorStop(0, "rgba(255,255,255,0)");
-    gradient.addColorStop(0.68, "rgba(255,255,255,0.14)");
-    gradient.addColorStop(0.82, "rgba(255,255,255,0.06)");
-    gradient.addColorStop(1, "rgba(255,255,255,0)");
-    context.fillStyle = gradient;
-    context.fillRect(0, 0, canvas.width, canvas.height);
-    return canvas;
-  }
-
-  private rainbowMaterial(texture: THREE.Texture): THREE.SpriteMaterial {
-    return new THREE.SpriteMaterial({
-      map: texture,
+    // Vrai arc-en-ciel : un arc ANGULAIRE (~42° autour du point antisolaire)
+    // dessiné par un shader sur un dôme qui suit la caméra. Couleurs spectrales
+    // correctes, double arc + bande sombre d'Alexander, occulté par le terrain
+    // (depthTest) et fondu dans l'horizon. Plus un simple décal posé dans le ciel.
+    const geometry = new THREE.SphereGeometry(1480, 64, 32);
+    const material = new THREE.ShaderMaterial({
+      side: THREE.BackSide,
       transparent: true,
-      opacity: 0,
       depthWrite: false,
-      depthTest: false,
+      depthTest: true,
       blending: THREE.AdditiveBlending,
-      color: 0xffffff,
+      uniforms: {
+        uAntisolar: { value: new THREE.Vector3(0, -1, 0) },
+        uIntensity: { value: 0 },
+      },
+      vertexShader: /* glsl */ `
+        varying vec3 vDir;
+        void main() {
+          vDir = normalize(position);
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: /* glsl */ `
+        precision highp float;
+        uniform vec3 uAntisolar;
+        uniform float uIntensity;
+        varying vec3 vDir;
+        vec3 hsv2rgb(vec3 c) {
+          vec4 K = vec4(1.0, 0.6666667, 0.3333333, 3.0);
+          vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
+          return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
+        }
+        // t = 0 violet (intérieur de l'arc) .. 1 rouge (extérieur).
+        vec3 spectrum(float t) {
+          t = clamp(t, 0.0, 1.0);
+          return hsv2rgb(vec3((1.0 - t) * 0.78, 0.92, 1.0));
+        }
+        void main() {
+          vec3 dir = normalize(vDir);
+          float ang = degrees(acos(clamp(dot(dir, normalize(uAntisolar)), -1.0, 1.0)));
+          // Arc primaire (~40.7..42.3°).
+          float primaryBand = smoothstep(40.1, 40.7, ang) * (1.0 - smoothstep(42.3, 43.0, ang));
+          vec3 primaryColor = spectrum((ang - 40.7) / 1.6) * primaryBand;
+          // Arc secondaire (~51..53.4°), spectre inversé, plus pâle.
+          float secBand = smoothstep(50.3, 51.0, ang) * (1.0 - smoothstep(53.4, 54.2, ang));
+          vec3 secColor = spectrum(1.0 - (ang - 51.0) / 2.4) * secBand * 0.42;
+          // Fondu dans l'horizon ; invisible sous l'horizon.
+          float horizon = smoothstep(-0.04, 0.16, dir.y);
+          vec3 color = (primaryColor + secColor) * horizon * uIntensity * 0.85;
+          float bright = max(max(color.r, color.g), color.b);
+          if (bright < 0.003) discard;
+          gl_FragColor = vec4(color, 1.0);
+        }
+      `,
     });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.frustumCulled = false;
+    mesh.renderOrder = 1;
+    this.rainbowMaterialRef = material;
+    this.rainbowGroup.add(mesh);
   }
 
   private isPrecipitating(): boolean {
