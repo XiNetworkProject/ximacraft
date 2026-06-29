@@ -5,6 +5,7 @@ import { TextureManager } from "../assets/TextureManager";
 import { Time } from "../game/Time";
 import { WeatherSystem } from "../world/WeatherSystem";
 import { WeatherSample } from "../weather/WeatherTypes";
+import type { EnvironmentState } from "../environment/EnvironmentState";
 
 export class HUD {
   readonly root: HTMLDivElement;
@@ -33,6 +34,7 @@ export class HUD {
     time: Time,
     weather: WeatherSystem,
     regional?: WeatherSample,
+    environment?: EnvironmentState,
   ): void {
     const selected = player.inventory.selectedSlot ? blocks.get(player.inventory.selectedSlot.blockId).displayName : "None";
     const stats = chunks.getStats();
@@ -53,6 +55,12 @@ export class HUD {
       regional?.weatherType ?? "n/a",
       regional ? regional.temperature.toFixed(1) : "n/a",
       regional ? regional.windSpeed.toFixed(1) : "n/a",
+      environment?.season.season ?? "n/a",
+      environment ? environment.thermal.feelsLike.toFixed(1) : "n/a",
+      environment?.surface.mood ?? "n/a",
+      environment?.precipitationKind ?? "n/a",
+      environment?.fauna.label ?? "n/a",
+      environment ? environment.fog.visibilityMeters.toString() : "n/a",
       textures.stats.loadedCount,
       textures.stats.fallbacks.length,
     ].join("|");
@@ -65,6 +73,7 @@ export class HUD {
       <div>${player.gameMode}${player.creativeFlying ? " flying" : ""} | ${selected} | XYZ ${player.position.x.toFixed(1)} ${player.position.y.toFixed(1)} ${player.position.z.toFixed(1)}</div>
       <div>Chunks ${stats.loadedChunks} | Triangles ${stats.triangles.toLocaleString()} | Time ${Math.floor(time.ticks)} | Weather ${weather.current} ${weather.intensity.toFixed(2)}</div>
       <div>Regional ${regional?.weatherType ?? "n/a"} | Temp ${regional ? regional.temperature.toFixed(1) : "n/a"}C | Wind ${regional ? regional.windSpeed.toFixed(1) : "n/a"}</div>
+      <div>Season ${environment?.season.season ?? "n/a"} | Feels ${environment ? environment.thermal.feelsLike.toFixed(1) : "n/a"}C | Ground ${environment?.surface.mood ?? "n/a"} | ${environment?.precipitationKind ?? "n/a"} | Fauna ${environment?.fauna.label ?? "n/a"} | Fog ${environment ? environment.fog.visibilityMeters : "n/a"}m</div>
       <div>Textures ${textures.stats.loadedCount} loaded, ${textures.stats.fallbacks.length} fallback</div>
     `;
   }

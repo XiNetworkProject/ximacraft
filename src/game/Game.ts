@@ -53,6 +53,8 @@ import { SeasonSystem } from "../living/SeasonSystem";
 import { LivingWorldSystem } from "../living/LivingWorldSystem";
 import { AmbientBiomeAudioSystem } from "../living/AmbientBiomeAudioSystem";
 import { WorldMemorySystem } from "../living/WorldMemorySystem";
+import { EnvironmentDirector } from "../environment/EnvironmentDirector";
+import type { EnvironmentState } from "../environment/EnvironmentState";
 import { WeatherMapUI } from "../ui/weather/WeatherMapUI";
 import { DebugOverlay } from "../ui/DebugOverlay";
 import { HotbarUI } from "../ui/HotbarUI";
@@ -110,6 +112,7 @@ export class Game {
   private readonly forecastSystem = new ForecastSystem(this.weatherEngine);
   private readonly weatherDirector = new WeatherDirector(this.weatherEngine);
   private readonly seasonSystem = new SeasonSystem();
+  private readonly environmentDirector = new EnvironmentDirector(this.weatherEngine, this.seasonSystem, () => this.currentSeed);
   private readonly alertSystem = new WeatherAlertSystem();
   private readonly weatherMapData = new WeatherMapDataBuilder(this.weatherEngine, this.forecastSystem);
   private readonly weatherRenderer: WeatherRenderer;
@@ -180,6 +183,7 @@ export class Game {
   private cachedSheltered = false;
   private qualityPreset: QualityPreset = "balanced";
   private weatherDebugProbeTimer = 0;
+  private lastEnvironmentVisualKey = "";
 
   constructor(container: HTMLElement) {
     this.renderer = new Renderer(container);
@@ -378,6 +382,7 @@ export class Game {
     // Le scénario garantit l'accumulation au sol pour la neige soufflée / poudrerie.
     this.weatherDirector.scenarios.onForcePrecip = (kind, intensity, seconds) =>
       this.groundSystem.forcePrecip(kind, intensity, seconds);
+    this.lastEnvironmentVisualKey = "";
 
     if (saveData) {
       this.player.restore(saveData.player as ReturnType<Player["serialize"]>);
@@ -540,6 +545,29 @@ export class Game {
       weatherScene.precipitation,
       weatherScene.temperatureProfile.surface,
     );
+    const environment = this.environmentDirector.update({
+      delta,
+      world,
+      surfaceState: this.surfaceState,
+      ticks: this.time.ticks,
+      player: this.player.position,
+      dayFactor,
+      exposedToSky: this.cachedSheltered ? 0.15 : 1,
+    });
+    world.environmentVisualState = environment.visual;
+    this.refreshEnvironmentVisualsIfNeeded(environment, world);
+    document.documentElement.dataset.environmentState = JSON.stringify({
+      season: environment.season.season,
+      temp: Number(environment.temperature.toFixed(1)),
+      feels: Number(environment.thermal.feelsLike.toFixed(1)),
+      ground: environment.surface.mood,
+      precip: environment.precipitationKind,
+      river: Number(environment.riverLevel.toFixed(2)),
+      fauna: environment.fauna.label,
+      haze: Number(environment.airQuality.haze.toFixed(2)),
+      fog: Number(environment.fog.density.toFixed(2)),
+      visibility: environment.fog.visibilityMeters,
+    });
     this.groundRenderer.update(delta, camera);
     this.weatherVisualTimer -= delta;
     this.weatherVisualDelta += delta;
@@ -592,14 +620,14 @@ export class Game {
       },
       delta,
     );
-    this.biomeAmbience.update(world, this.player.position, sample, this.time.ticks, season, delta);
+    this.biomeAmbience.update(world, this.player.position, sample, this.time.ticks, season, delta, environment);
     this.updateTargetBlock();
 
     if (controlsEnabled) {
       this.handleBlockActions();
     }
 
-    this.hud.update(this.player, chunks, this.blockRegistry, this.textureManager, this.time, this.weather, sample);
+    this.hud.update(this.player, chunks, this.blockRegistry, this.textureManager, this.time, this.weather, sample, environment);
     this.hotbar.render();
     this.debug.update(delta, this.player, chunks, this.textureManager, this.time, this.weather, this.currentSeed, sample, this.alertSystem.list().length);
   }
@@ -1052,7 +1080,8 @@ export class Game {
     const cellZ = Math.floor(pz / CELL_SIZE);
     const base = this.biomeWeather.baselineForCell(cellX, cellZ, world);
     const snowCol = this.surfaceState.get(px, pz);
-    const temp = base.temperature;
+    const seasonState = this.seasonSystem.sample(this.time.ticks);
+    const temp = base.temperature + seasonState.temperatureOffset;
     const here = world.getSurfaceHeight(px, pz);
     const relief =
       Math.abs(world.getSurfaceHeight(px + 32, pz) - here)
@@ -1061,8 +1090,7 @@ export class Game {
       + Math.abs(world.getSurfaceHeight(px, pz - 32) - here);
     const terrainLift = Math.min(1, relief / 72);
     const pressureTrend = (this.weatherEngine.getObserverCell().pressure - base.pressure) / 10;
-    const season: "SPRING" | "SUMMER" | "AUTUMN" | "WINTER" =
-      temp <= 3 ? "WINTER" : temp >= 24 ? "SUMMER" : temp <= 11 ? "AUTUMN" : "SPRING";
+    const season = seasonState.season.toUpperCase() as "SPRING" | "SUMMER" | "AUTUMN" | "WINTER";
     this.weatherDirector.setEnvironment({
       timeOfDay: this.time.timeOfDay,
       season,
@@ -1114,7 +1142,27 @@ export class Game {
       seasonSystem: this.seasonSystem,
       ambientBiomeAudio: this.biomeAmbience,
       worldMemory: this.worldMemory,
+      environmentDirector: this.environmentDirector,
     });
+  }
+
+  private refreshEnvironmentVisualsIfNeeded(environment: EnvironmentState, world: World): void {
+    const visual = environment.visual;
+    const key = [
+      visual.season,
+      Math.round(visual.vegetation * 5),
+      Math.round(visual.leafWarmth * 5),
+      Math.round(visual.leafDrop * 5),
+      Math.round(visual.dryness * 5),
+      Math.round(visual.frost * 4),
+      Math.round(visual.snow * 4),
+      Math.round(visual.wetness * 3),
+    ].join(":");
+    if (key === this.lastEnvironmentVisualKey) return;
+    this.lastEnvironmentVisualKey = key;
+    for (const chunk of world.chunks.values()) {
+      chunk.dirty = true;
+    }
   }
 
   private setRenderDistance(distance: number): void {

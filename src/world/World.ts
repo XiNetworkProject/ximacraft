@@ -5,11 +5,13 @@ import { Chunk } from "./Chunk";
 import { TerrainGenerator } from "./TerrainGenerator";
 import { blockKey, chunkKey, parseBlockKey, worldToChunk, worldToLocal } from "../utils/MathUtils";
 import { CHUNK_SIZE, SEA_LEVEL, WORLD_HEIGHT } from "../utils/Constants";
+import type { EnvironmentVisualState } from "../environment/EnvironmentState";
 
 export class World {
   readonly chunks = new Map<string, Chunk>();
   readonly blockChanges = new Map<string, BlockId>();
   readonly terrain: TerrainGenerator;
+  environmentVisualState: EnvironmentVisualState | null = null;
   private readonly chunkCreatedHandlers: Array<(chunk: Chunk) => void> = [];
 
   constructor(

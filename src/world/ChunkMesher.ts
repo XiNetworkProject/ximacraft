@@ -453,7 +453,7 @@ export class ChunkMesher {
       return tint.multiplyScalar(shade);
     }
     if (blockId === BlockId.SPRUCE_LEAVES) {
-      const tint = this.textureTint(new THREE.Color(0x3f7a5d), 0.86);
+      const tint = this.textureTint(this.applyEnvironmentFoliageTint(new THREE.Color(0x3f7a5d), x, z, true), 0.86);
       if (isSnowLayer(this.world.getBlock(x, y + 1, z))) tint.lerp(new THREE.Color(0xdce8e9), face === "top" ? 0.72 : 0.36);
       return tint.multiplyScalar(shade);
     }
@@ -514,83 +514,134 @@ export class ChunkMesher {
 
   private grassTint(x: number, z: number): THREE.Color {
     const biome = this.world.getBiomeAt(x, z);
+    let color: THREE.Color;
     switch (biome.id) {
       case "forest":
       case "young_forest":
       case "old_forest":
       case "birch_forest":
-        return new THREE.Color(0x63b84d);
+        color = new THREE.Color(0x63b84d);
+        break;
       case "dark_forest":
-        return new THREE.Color(0x4f8f3e);
+        color = new THREE.Color(0x4f8f3e);
+        break;
       case "pine_forest":
       case "taiga":
       case "snow_forest":
-        return new THREE.Color(0x6fa96a);
+        color = new THREE.Color(0x6fa96a);
+        break;
       case "flower_meadow":
-        return new THREE.Color(0x79c45a);
+        color = new THREE.Color(0x79c45a);
+        break;
       case "dry_prairie":
       case "bocage":
-        return new THREE.Color(0x88b95e);
+        color = new THREE.Color(0x88b95e);
+        break;
       case "marsh":
       case "bog":
       case "riverbank":
-        return new THREE.Color(0x5fa85a);
+        color = new THREE.Color(0x5fa85a);
+        break;
       case "hills":
       case "plateau":
-        return new THREE.Color(0x78b85a);
+        color = new THREE.Color(0x78b85a);
+        break;
       case "mountains":
       case "alpine_mountain":
       case "cliffs":
-        return new THREE.Color(0x8cae6b);
+        color = new THREE.Color(0x8cae6b);
+        break;
       case "snow":
       case "tundra":
       case "glacial_valley":
       case "high_mountain":
-        return new THREE.Color(0xb9cfa6);
+        color = new THREE.Color(0xb9cfa6);
+        break;
       case "desert":
       case "dunes":
       case "rocky_desert":
       case "canyon":
       case "beach":
-        return new THREE.Color(0xb9b66b);
+        color = new THREE.Color(0xb9b66b);
+        break;
       default:
-        return new THREE.Color(0x70c850);
+        color = new THREE.Color(0x70c850);
+        break;
     }
+    return this.applyEnvironmentGrassTint(color, x, z);
   }
 
   private foliageTint(x: number, z: number, birch: boolean): THREE.Color {
     const biome = this.world.getBiomeAt(x, z);
+    let color: THREE.Color;
     if (birch) {
-      return new THREE.Color(biome.id === "snow" || biome.id === "snow_forest" || biome.id === "tundra" ? 0xaecb76 : 0x94c95f);
+      color = new THREE.Color(biome.id === "snow" || biome.id === "snow_forest" || biome.id === "tundra" ? 0xaecb76 : 0x94c95f);
+      return this.applyEnvironmentFoliageTint(color, x, z, false);
     }
     switch (biome.id) {
       case "forest":
       case "young_forest":
       case "old_forest":
       case "birch_forest":
-        return new THREE.Color(0x4fa83f);
+        color = new THREE.Color(0x4fa83f);
+        break;
       case "snow":
       case "snow_forest":
       case "tundra":
       case "glacial_valley":
-        return new THREE.Color(0x789b62);
+        color = new THREE.Color(0x789b62);
+        break;
       case "dark_forest":
-        return new THREE.Color(0x2f6e36);
+        color = new THREE.Color(0x2f6e36);
+        break;
       case "pine_forest":
       case "taiga":
-        return new THREE.Color(0x4f8060);
+        color = new THREE.Color(0x4f8060);
+        break;
       case "marsh":
       case "bog":
-        return new THREE.Color(0x4b8d4c);
+        color = new THREE.Color(0x4b8d4c);
+        break;
       case "hills":
       case "mountains":
       case "plateau":
       case "alpine_mountain":
       case "cliffs":
-        return new THREE.Color(0x5f9f48);
+        color = new THREE.Color(0x5f9f48);
+        break;
       default:
-        return new THREE.Color(0x59b143);
+        color = new THREE.Color(0x59b143);
+        break;
     }
+    return this.applyEnvironmentFoliageTint(color, x, z, birch);
+  }
+
+  private applyEnvironmentGrassTint(color: THREE.Color, x: number, z: number): THREE.Color {
+    const visual = this.world.environmentVisualState;
+    if (!visual) return color;
+    const local = hash2(x * 0.041 + 19.7, z * 0.041 - 7.1);
+    color.lerp(new THREE.Color(0xb9bf75), visual.dryness * (0.28 + local * 0.18));
+    color.lerp(new THREE.Color(0x7fcf62), Math.max(0, visual.flowering - 0.35) * 0.08);
+    color.lerp(new THREE.Color(0xd0b46a), visual.leafWarmth * 0.12);
+    color.lerp(new THREE.Color(0xa7c392), (1 - visual.vegetation) * 0.36);
+    color.lerp(new THREE.Color(0xdce8e9), Math.max(visual.frost * 0.55, visual.snow * 0.72));
+    if (visual.wetness > 0.2) color.multiplyScalar(1 - visual.wetness * 0.08);
+    return color;
+  }
+
+  private applyEnvironmentFoliageTint(color: THREE.Color, x: number, z: number, coniferLike: boolean): THREE.Color {
+    const visual = this.world.environmentVisualState;
+    if (!visual) return color;
+    const local = hash2(x * 0.057 - 4.3, z * 0.057 + 11.9);
+    if (!coniferLike) {
+      const autumnWarmth = visual.leafWarmth * (0.45 + local * 0.5);
+      color.lerp(new THREE.Color(0xc48b3a), autumnWarmth * 0.48);
+      color.lerp(new THREE.Color(0x8c6b3b), visual.leafDrop * (0.16 + local * 0.14));
+    }
+    color.lerp(new THREE.Color(0x8fb888), (1 - visual.vegetation) * (coniferLike ? 0.12 : 0.26));
+    color.lerp(new THREE.Color(0xdce8e9), Math.max(visual.frost * 0.42, visual.snow * 0.62));
+    if (visual.wetness > 0.2) color.multiplyScalar(1 - visual.wetness * 0.05);
+    return color;
   }
 
   private plantColor(blockId: BlockId, x: number, z: number): THREE.Color {

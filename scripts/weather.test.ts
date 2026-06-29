@@ -23,6 +23,12 @@ import { BlockId } from "../src/world/BlockTypes";
 import { Chunk } from "../src/world/Chunk";
 import { SEA_LEVEL } from "../src/utils/Constants";
 import { BlockGeometryBuilder } from "../src/world/BlockGeometryBuilder";
+import { ThermalComfortSystem } from "../src/environment/ThermalComfortSystem";
+import { SurfaceConditionSystem } from "../src/environment/SurfaceConditionSystem";
+import { WorldPhenologySystem } from "../src/environment/WorldPhenologySystem";
+import { FogBankSystem } from "../src/environment/FogBankSystem";
+import { dewPointC } from "../src/environment/EnvironmentDirector";
+import { SeasonState } from "../src/living/SeasonSystem";
 
 let passed = 0;
 let failed = 0;
@@ -287,6 +293,56 @@ console.log("\n[surface] rich precipitation drives persistent snow and ice");
   const center = state.get(0, 0);
   check("freezing rain creates a persistent ice layer", (center?.iceDepth ?? 0) > 0, `ice=${center?.iceDepth ?? 0}`);
   check("freezing rain also leaves the surface wet", (center?.wetness ?? 0) > 0, `wet=${center?.wetness ?? 0}`);
+}
+
+// ============================================================================
+console.log("\n[environment] seasons, comfort, dew/frost and fog are coherent");
+{
+  const thermal = new ThermalComfortSystem();
+  const cold = thermal.resolve({ temperature: -4, humidity: 0.72, windSpeed: 12, sunExposure: 0.05, precipitation: 0.2 });
+  const hot = thermal.resolve({ temperature: 31, humidity: 0.78, windSpeed: 2, sunExposure: 0.9, precipitation: 0 });
+  check("wind and precipitation create cold stress in winter", cold.coldStress > 0.35 && cold.feelsLike < -4, `feels=${cold.feelsLike.toFixed(1)} stress=${cold.coldStress.toFixed(2)}`);
+  check("humid sunny heat creates heat stress", hot.heatStress > 0.35 && hot.feelsLike > 33, `feels=${hot.feelsLike.toFixed(1)} stress=${hot.heatStress.toFixed(2)}`);
+
+  const surfaceState = new SurfaceWeatherState(() => 70);
+  const surface = new SurfaceConditionSystem();
+  const frostSample = {
+    temperature: -1,
+    humidity: 0.94,
+    pressure: 1016,
+    instability: 0,
+    cloudCover: 0.12,
+    precipitation: 0,
+    thunderRisk: 0,
+    windX: 0.3,
+    windZ: 0.2,
+    clearingBias: 0,
+    weatherType: WeatherType.CLEAR,
+    windSpeed: 0.36,
+  };
+  const frost = surface.resolve({ x: 0, z: 0, weather: frostSample, dewPoint: dewPointC(-1, 0.94), dayFactor: 0.05, exposedToSky: 1, surfaceState });
+  const dew = surface.resolve({ x: 0, z: 0, weather: { ...frostSample, temperature: 7, humidity: 0.92, windSpeed: 0.4 }, dewPoint: dewPointC(7, 0.92), dayFactor: 0.08, exposedToSky: 1, surfaceState });
+  check("cold saturated calm night creates frost", frost.frost > 0.1 && frost.mood === "frost", `frost=${frost.frost.toFixed(2)} mood=${frost.mood}`);
+  check("mild saturated calm night creates dew", dew.dew > 0.1 && dew.mood === "dew", `dew=${dew.dew.toFixed(2)} mood=${dew.mood}`);
+
+  const phenology = new WorldPhenologySystem();
+  const winter: SeasonState = { season: "winter", dayOfYear: 80, progress: 0.35, temperatureOffset: -6, vegetation: 0.28, wildlife: 0.4, insectActivity: 0.03, leafWarmth: 0.08, snowBias: 0.78 };
+  const autumn: SeasonState = { season: "autumn", dayOfYear: 60, progress: 0.6, temperatureOffset: -1, vegetation: 0.72, wildlife: 0.78, insectActivity: 0.38, leafWarmth: 0.72, snowBias: 0.08 };
+  const winterVisual = phenology.resolve(winter, { ...frost, snowDepth: 0.4 }, -3, 0.8, 0.3);
+  const autumnVisual = phenology.resolve(autumn, dew, 11, 0.65, 0.55);
+  check("winter visual state mutes vegetation and raises snow/frost", winterVisual.vegetation < 0.4 && winterVisual.snow > 0.4 && winterVisual.frost > 0.1);
+  check("autumn visual state warms leaves without forcing full snow", autumnVisual.leafWarmth > 0.65 && autumnVisual.snow < 0.2);
+
+  const fogA = new FogBankSystem();
+  const fogB = new FogBankSystem();
+  let stateA = fogA.update(3, { seed: "fog-seed", playerX: 0, playerZ: 0, humidity: 0.96, dewPoint: 8, temperature: 8.2, windX: 0.8, windZ: 0.1, windSpeed: 0.8, dayFactor: 0.02, precipitation: 0, waterNearby: 0.8, valleyFactor: 0.5 });
+  let stateB = fogB.update(3, { seed: "fog-seed", playerX: 0, playerZ: 0, humidity: 0.96, dewPoint: 8, temperature: 8.2, windX: 0.8, windZ: 0.1, windSpeed: 0.8, dayFactor: 0.02, precipitation: 0, waterNearby: 0.8, valleyFactor: 0.5 });
+  for (let i = 0; i < 12; i += 1) {
+    stateA = fogA.update(3, { seed: "fog-seed", playerX: 0, playerZ: 0, humidity: 0.96, dewPoint: 8, temperature: 8.2, windX: 0.8, windZ: 0.1, windSpeed: 0.8, dayFactor: 0.02, precipitation: 0, waterNearby: 0.8, valleyFactor: 0.5 });
+    stateB = fogB.update(3, { seed: "fog-seed", playerX: 0, playerZ: 0, humidity: 0.96, dewPoint: 8, temperature: 8.2, windX: 0.8, windZ: 0.1, windSpeed: 0.8, dayFactor: 0.02, precipitation: 0, waterNearby: 0.8, valleyFactor: 0.5 });
+  }
+  check("humid calm water/valley setup creates visible fog or mist", stateA.density > 0.15, `density=${stateA.density.toFixed(2)}`);
+  check("fog bank sampling is deterministic for same seed/input", stateA.density.toFixed(3) === stateB.density.toFixed(3) && stateA.kind === stateB.kind, `a=${stateA.density.toFixed(3)} b=${stateB.density.toFixed(3)}`);
 }
 
 // ============================================================================

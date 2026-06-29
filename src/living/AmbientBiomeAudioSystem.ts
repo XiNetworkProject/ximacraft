@@ -4,6 +4,7 @@ import { WeatherSample, WeatherType } from "../weather/WeatherTypes";
 import { World } from "../world/World";
 import { BlockId } from "../world/BlockTypes";
 import { SeasonState } from "./SeasonSystem";
+import type { EnvironmentState } from "../environment/EnvironmentState";
 
 type ChannelName = "forest" | "insects" | "water" | "cave" | "wind";
 
@@ -28,7 +29,7 @@ export class AmbientBiomeAudioSystem {
     this.unlocked = true;
   }
 
-  update(world: World, player: { x: number; y: number; z: number }, sample: WeatherSample, ticks: number, season: SeasonState, delta: number): void {
+  update(world: World, player: { x: number; y: number; z: number }, sample: WeatherSample, ticks: number, season: SeasonState, delta: number, environment?: EnvironmentState): void {
     if (!this.unlocked || !this.context) return;
     const biome = world.getBiomeAt(player.x, player.z).id;
     const time = ((ticks % WORLD_DAY_TICKS) + WORLD_DAY_TICKS) % WORLD_DAY_TICKS / WORLD_DAY_TICKS;
@@ -36,14 +37,16 @@ export class AmbientBiomeAudioSystem {
     const dawnDusk = Math.max(0, 1 - Math.min(Math.abs(time - 0.25), Math.abs(time - 0.75)) * 5);
     const water = this.waterPresence(world, player.x, player.z);
     const cave = player.y < world.getSurfaceHeight(player.x, player.z) - 5 ? 1 : 0;
-    const stormMute = sample.weatherType === WeatherType.THUNDERSTORM ? 0.38 : sample.weatherType === WeatherType.SNOW && sample.windSpeed > 12 ? 0.24 : 1;
+    const fogMute = environment ? 1 - environment.fog.density * 0.28 : 1;
+    const stormMute = (sample.weatherType === WeatherType.THUNDERSTORM ? 0.38 : sample.weatherType === WeatherType.SNOW && sample.windSpeed > 12 ? 0.24 : 1) * fogMute;
     const forest = biome === "forest" || biome === "snow" ? 0.75 : biome === "plains" || biome === "hills" ? 0.28 : 0.05;
     const insect = season.insectActivity * (night ? 0.85 : dawnDusk * 0.42) * (biome === "desert" || biome === "snow" ? 0.12 : 1);
-    const wind = clamp(sample.windSpeed / 22, 0, 1);
+    const wind = clamp((environment?.gustSpeed ?? sample.windSpeed) / 26, 0, 1);
+    const wetGround = environment ? environment.surface.wetness : 0;
 
     this.setChannel("forest", forest * stormMute * (night ? 0.45 : 0.75 + dawnDusk * 0.25), 520, delta);
     this.setChannel("insects", insect * stormMute, night ? 2500 : 1900, delta);
-    this.setChannel("water", water * (0.22 + sample.precipitation * 0.42), 720, delta);
+    this.setChannel("water", water * (0.22 + sample.precipitation * 0.42 + wetGround * 0.12), 720, delta);
     this.setChannel("cave", cave * (0.34 + wind * 0.2), 180, delta);
     this.setChannel("wind", wind * (0.08 + sample.precipitation * 0.16 + cave * 0.18), 340 + wind * 700, delta);
     this.debugLabel = [
@@ -52,6 +55,7 @@ export class AmbientBiomeAudioSystem {
       water > 0.35 ? "water" : "",
       cave > 0 ? "cave" : "",
       wind > 0.35 ? "wind" : "",
+      environment && environment.fog.density > 0.35 ? "fog" : "",
     ].filter(Boolean).join("+") || "quiet";
   }
 

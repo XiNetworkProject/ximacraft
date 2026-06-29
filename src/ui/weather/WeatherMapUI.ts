@@ -75,8 +75,10 @@ export class WeatherMapUI {
       forecast: "Previsions",
       temperature: "Temperature",
       accumulation: "Sol",
+      fog: "Brouillard",
+      rivers: "Eau",
     };
-    (["radar", "satellite", "wind", "pressure", "alerts", "forecast", "temperature", "accumulation"] as WeatherMapLayer[]).forEach((layer) => {
+    (["radar", "satellite", "wind", "pressure", "alerts", "forecast", "temperature", "accumulation", "fog", "rivers"] as WeatherMapLayer[]).forEach((layer) => {
       const button = document.createElement("button");
       button.type = "button";
       button.textContent = layerLabels[layer];
@@ -175,6 +177,8 @@ export class WeatherMapUI {
     if (this.activeLayers.has("temperature")) this.drawSampleLayer(data, this.temperatureColor);
     if (this.activeLayers.has("satellite")) this.drawSampleLayer(data, satelliteColor);
     if (this.activeLayers.has("radar")) this.drawSampleLayer(data, radarColor);
+    if (this.activeLayers.has("fog")) this.drawSampleLayer(data, this.fogColor);
+    if (this.activeLayers.has("rivers")) this.drawSampleLayer(data, this.riverColor);
     if (this.activeLayers.has("accumulation")) this.drawSampleLayer(data, this.accumulationColor);
     if (this.activeLayers.has("forecast")) this.drawEventTracks(data);
     if (this.activeLayers.has("alerts")) this.drawAlerts(data);
@@ -336,6 +340,21 @@ export class WeatherMapUI {
     if (sample.iceDepth > 0.03) return `rgba(185,230,255,${Math.min(0.65, sample.iceDepth * 0.65)})`;
     if (sample.wetness > 0.08) return `rgba(70,105,130,${Math.min(0.5, sample.wetness * 0.45)})`;
     return "rgba(0,0,0,0)";
+  }
+
+  private fogColor(sample: WeatherMapSample): string {
+    if (sample.fogDensity <= 0.03 && sample.haze <= 0.04) return "rgba(0,0,0,0)";
+    const alpha = Math.min(0.68, sample.fogDensity * 0.62 + sample.haze * 0.24);
+    const warm = sample.surfaceTemperature > 22 ? 1 : 0;
+    const r = Math.round(190 + warm * 35);
+    const g = Math.round(205 + warm * 18);
+    const b = Math.round(212 - warm * 28);
+    return `rgba(${r},${g},${b},${alpha})`;
+  }
+
+  private riverColor(sample: WeatherMapSample): string {
+    if (!sample.water && sample.riverLevel < 0.45) return "rgba(0,0,0,0)";
+    return `rgba(35,125,180,${sample.water ? 0.58 : Math.max(0, (sample.riverLevel - 0.45) * 0.9)})`;
   }
 
   private terrainColor(sample: WeatherMapSample): string {

@@ -94,6 +94,7 @@ const CARDINALS = new Set<Cardinal>(["north", "south", "east", "west", "ne", "nw
 
 /** Alias acceptés par /weather scenario (pour l'aide). */
 const SCENARIO_ALIAS_NAMES = [
+  "clear_spring", "summer_heatwave", "autumn_rain", "winter_fog", "lake_morning_mist", "post_storm_clearing",
   "clear_day", "clear_cirrus", "fair_cumulus", "scattered_cumulus", "broken_cumulus",
   "grey_dry", "stratocumulus_broken", "warm_front", "frontal_rain", "cold_front",
   "post_frontal_showers", "isolated_shower", "isolated_thunderstorm", "storm_visible_far",
@@ -231,6 +232,12 @@ export class WeatherCommands {
     const S = WeatherScenario;
     this.resetCloudVisuals?.();
     switch (name) {
+      case "clear_spring": this.startScenario(S.FAIR_CUMULUS_DAY, 1); return true;
+      case "summer_heatwave": this.startScenario(S.HEAT_HAZE_DAY); this.engine.setWind(2, 1); return true;
+      case "autumn_rain": this.startScenario(S.FRONTAL_RAIN_SEQUENCE, 1); return true;
+      case "winter_fog": this.startScenario(S.FREEZING_FOG_EVENT); return true;
+      case "lake_morning_mist": this.startScenario(S.MORNING_FOG); this.engine.setWind(1, 0.3); return true;
+      case "post_storm_clearing": this.pinSky(SkyState.POST_SHOWER_SKY); this.engine.spawnClearing(3600); return true;
       case "clear_day": this.startScenario(S.CLEAR_DAY); return true;
       case "clear_cirrus": this.pinSky(SkyState.CLEAR_WITH_CIRRUS); return true;
       case "fair_cumulus": this.startScenario(S.FAIR_CUMULUS_DAY, 2); return true;
@@ -832,7 +839,7 @@ export class WeatherCommands {
       return;
     }
     if (parts[2] !== "cell") {
-      this.write("Usage: /weather debug cell|events|ground|wind|director|scene|plan|layers|precipitation|cloud_population|lightning");
+      this.write("Usage: /weather debug cell|events|ground|wind|director|scene|plan|layers|precipitation|cloud_population|lightning|environment|thermal|fog");
       return;
     }
     const cell = this.engine.getObserverCell();
@@ -932,7 +939,11 @@ export class WeatherCommands {
   // --- /weather spawn <event> ... ------------------------------------------
 
   private handleSpawn(parts: string[]): void {
-    const type = parts[2];
+    const type =
+      parts[2] === "storm" ? "storm_cell"
+      : parts[2] === "rainband" ? "rain_band"
+      : parts[2] === "fogbank" ? "fog_bank"
+      : parts[2];
     const kv = parseKeyValues(parts);
 
     const dirRaw = (kv.get("direction") ?? "east") as Cardinal;
@@ -955,6 +966,11 @@ export class WeatherCommands {
     const at = (defaultDistance: number): { x: number; z: number } => {
       const d = numberOr(kv.get("distance"), defaultDistance);
       return { x: o.x - dir.x * d, z: o.z - dir.z * d };
+    };
+    const point = (fallback: { x: number; z: number }): { x: number; z: number } => {
+      const x = Number(kv.get("x"));
+      const z = Number(kv.get("z"));
+      return Number.isFinite(x) && Number.isFinite(z) ? { x, z } : fallback;
     };
 
     switch (type) {
@@ -1006,7 +1022,7 @@ export class WeatherCommands {
       }
       case "storm_cell": {
         const radius = numberOr(kv.get("radius"), 1200);
-        const p = at(2000);
+        const p = point(at(2000));
         const e = this.engine.spawnStormCell(radius, p.x, p.z);
         e.intensity = intensity;
         e.setDirection(dirRaw);
@@ -1026,9 +1042,17 @@ export class WeatherCommands {
       }
       case "rain_band": {
         const radius = numberOr(kv.get("width"), numberOr(kv.get("radius"), 900)) / 2 || 900;
-        const p = at(2000);
+        const p = point(at(2000));
         const e = this.engine.addEvent(new RainBandEvent({ x: p.x, z: p.z, radius, intensity, direction: dirRaw }));
         this.write(`Rain band spawned heading ${dirRaw} (intensity=${levelRaw}).`);
+        break;
+      }
+      case "heatwave": {
+        const radius = numberOr(kv.get("radius"), 3200);
+        this.director?.forceScenario(WeatherScenario.HEAT_HAZE_DAY, { immediate: true });
+        this.engine.spawnClearing(radius);
+        this.engine.setWind(dir.x * WIND_SPEEDS.light, dir.z * WIND_SPEEDS.light);
+        this.write(`Heatwave scenario spawned radius=${radius} heading ${dirRaw}.`);
         break;
       }
       case "hailstorm": {
@@ -1060,13 +1084,16 @@ export class WeatherCommands {
         break;
       }
       case "fog_bank":
+        this.director?.forceScenario(WeatherScenario.MORNING_FOG, { immediate: true });
+        this.write("Fog bank scenario forced; mobile world-space fog banks are driven by EnvironmentDirector.");
+        break;
       case "sandstorm":
         // Rendu dédié (FogRenderer / dust wall) prévu en v0.5 — pas de fake ici.
         this.write(`'${type}' visual is staged for v0.5 (FogRenderer / dust wall). Engine hooks ready.`);
         break;
       default:
         this.write(
-          "spawn: cold_front|warm_front|occluded_front|rain_band|shower|storm_cell|supercell|squall_line|hailstorm|snow_squall|blizzard|fog_bank|sandstorm",
+          "spawn: cold_front|warm_front|rain_band|rainband|storm|storm_cell|supercell|squall_line|heatwave|hailstorm|snow_squall|blizzard|fog_bank|fogbank|sandstorm",
         );
     }
   }
@@ -1102,7 +1129,7 @@ function parseKeyValues(parts: string[]): Map<string, string> {
   const map = new Map<string, string>();
   for (const part of parts) {
     const eq = part.indexOf("=");
-    if (eq > 0) map.set(part.slice(0, eq), part.slice(eq + 1));
+    if (eq > 0) map.set(part.slice(0, eq).replace(/^--?/, ""), part.slice(eq + 1));
   }
   return map;
 }

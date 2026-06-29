@@ -4,8 +4,9 @@ import { WeatherPredictionModel } from "../forecast/WeatherPredictionModel";
 import { SurfaceWeatherState } from "../ground/SurfaceWeatherState";
 import { WorldSnowSystem } from "../ground/WorldSnowSystem";
 import { WeatherEngine } from "../WeatherEngine";
-import { CELL_SIZE, WeatherSample, WeatherType } from "../WeatherTypes";
+import { CELL_SIZE, PrecipKind, WeatherSample, WeatherType } from "../WeatherTypes";
 import type { World } from "../../world/World";
+import { BlockId } from "../../world/BlockTypes";
 
 export interface WeatherMapSample {
   x: number;
@@ -31,6 +32,11 @@ export interface WeatherMapSample {
   hailDepth: number;
   wetness: number;
   iceDepth: number;
+  surfaceTemperature: number;
+  fogDensity: number;
+  riverLevel: number;
+  haze: number;
+  precipitationKind: PrecipKind;
 }
 
 export interface WeatherMapEvent {
@@ -148,12 +154,15 @@ export class WeatherMapDataBuilder {
     const column = surface?.get(x, z);
     const terrainHeight = world?.getSurfaceHeight(x, z) ?? 0;
     const biome = world?.getBiomeAt(x, z);
+    const water = this.isWater(world, x, z, terrainHeight);
+    const fogDensity = Math.max(prediction.fogRisk * 0.72, sample.humidity > 0.82 && sample.windSpeed < 7 ? (sample.humidity - 0.82) * 2.2 : 0);
+    const riverLevel = Math.max(0, Math.min(1, (water ? 0.64 : 0.28) + (column?.wetness ?? 0) * 0.18 + sample.precipitation * 0.24));
     return {
       x,
       z,
       terrainHeight,
       biomeId: biome?.id ?? "unknown",
-      water: terrainHeight <= 48,
+      water,
       weatherType: sample.weatherType,
       temperature: sample.temperature,
       humidity: sample.humidity,
@@ -172,7 +181,18 @@ export class WeatherMapDataBuilder {
       hailDepth: column?.hailDepth ?? 0,
       wetness: column?.wetness ?? 0,
       iceDepth: column?.iceDepth ?? 0,
+      surfaceTemperature: sample.temperature - (column?.snowDepth ?? 0) * 2 - (column?.iceDepth ?? 0) * 1.4,
+      fogDensity,
+      riverLevel,
+      haze: Math.max(fogDensity, Math.max(0, sample.temperature - 28) / 20 * (1 - sample.humidity)),
+      precipitationKind: sample.precipitation < 0.04 ? "none" : sample.temperature <= 1 ? "snow" : sample.thunderRisk > 0.55 && sample.temperature < 18 ? "hail" : "rain",
     };
+  }
+
+  private isWater(world: World | undefined, x: number, z: number, terrainHeight: number): boolean {
+    if (!world) return terrainHeight <= 48;
+    const y = world.getSurfaceHeight(x, z);
+    return world.getBlock(Math.floor(x), y, Math.floor(z)) === BlockId.WATER || world.getBlock(Math.floor(x), y + 1, Math.floor(z)) === BlockId.WATER;
   }
 
   private advance(state: ReturnType<WeatherEngine["state"]["clone"]>, seconds: number): void {

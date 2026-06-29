@@ -6,6 +6,8 @@ export type WeatherMapLayer =
   | "alerts"
   | "forecast"
   | "temperature"
-  | "accumulation";
+  | "accumulation"
+  | "fog"
+  | "rivers";
 
-export const DEFAULT_WEATHER_MAP_LAYERS: WeatherMapLayer[] = ["radar", "satellite", "wind", "pressure", "alerts", "forecast", "accumulation"];
+export const DEFAULT_WEATHER_MAP_LAYERS: WeatherMapLayer[] = ["radar", "satellite", "wind", "pressure", "alerts", "forecast", "accumulation", "fog"];

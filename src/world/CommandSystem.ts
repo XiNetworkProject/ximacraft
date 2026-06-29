@@ -20,6 +20,7 @@ import { SeasonSystem, SeasonId } from "../living/SeasonSystem";
 import { AmbientBiomeAudioSystem } from "../living/AmbientBiomeAudioSystem";
 import { WorldMemorySystem } from "../living/WorldMemorySystem";
 import { WildlifeSpecies } from "../living/LivingWorldTypes";
+import { EnvironmentDirector } from "../environment/EnvironmentDirector";
 import { CHUNK_SIZE, WORLD_HEIGHT } from "../utils/Constants";
 import { BlockId, isLegacyTrack, isPlant } from "./BlockTypes";
 
@@ -62,6 +63,7 @@ export type CommandContext = {
   seasonSystem?: SeasonSystem;
   ambientBiomeAudio?: AmbientBiomeAudioSystem;
   worldMemory?: WorldMemorySystem;
+  environmentDirector?: EnvironmentDirector;
 };
 
 const weatherTypes: WeatherType[] = [
@@ -113,11 +115,19 @@ export const COMMANDS: CommandDefinition[] = [
   { usage: "/weather cinematic hail_core", prefix: "/weather cinematic hail_core", description: "Spawn a hail core." },
   { usage: "/weather cinematic sunset_rainbow", prefix: "/weather cinematic sunset_rainbow", description: "Spawn sunset rain and rainbow conditions." },
   { usage: "/weather scenario clear_day|fair_cumulus|warm_front|isolated_thunderstorm|morning_fog|steady_snow|blizzard|...", prefix: "/weather scenario", description: "Drive a full multi-phase weather scenario (clear, cumulus, fronts, storms, snow, fog, haze)." },
+  { usage: "/weather scenario clear_spring|summer_heatwave|autumn_rain|winter_fog|lake_morning_mist|post_storm_clearing", prefix: "/weather scenario", description: "Seasonal environment scenarios coupled to the world state." },
   { usage: "/weather debug scene|plan|layers|precipitation|cloud_population|lightning", prefix: "/weather debug scene", description: "Inspect the multi-axis weather scene, plan, layers, precipitation and lightning." },
-  { usage: "/weather debug cell|events|ground|wind|director", prefix: "/weather debug", description: "Inspect regional weather internals and transition plans." },
+  { usage: "/weather debug cell|events|ground|wind|director|environment|thermal|fog", prefix: "/weather debug", description: "Inspect regional weather, environment, comfort and fog banks." },
   { usage: "/weather set cloudy|clearing|rain|storm radius=1000", prefix: "/weather set", description: "Spawn regional weather." },
+  { usage: "/weather set season spring|summer|autumn|winter|auto", prefix: "/weather set season", description: "Force season through the environment director." },
+  { usage: "/weather set temperature -8|auto", prefix: "/weather set temperature", description: "Force or release local environment temperature." },
+  { usage: "/weather set wind 45 NW", prefix: "/weather set wind", description: "Force wind speed and direction for weather/environment tests." },
+  { usage: "/weather debug snow", prefix: "/weather debug snow", description: "Inspect snow burial, frost and surface temperature." },
   { usage: "/weather wind set direction=east speed=strong", prefix: "/weather wind set", description: "Set wind." },
   { usage: "/weather spawn storm_cell direction=east intensity=violent", prefix: "/weather spawn", description: "Spawn a weather event." },
+  { usage: "/weather spawn storm --x=0 --z=0 --radius=2200", prefix: "/weather spawn storm", description: "Spawn a storm at explicit coordinates." },
+  { usage: "/weather spawn fogbank --x=0 --z=0 --direction=sw", prefix: "/weather spawn fogbank", description: "Force a fog bank scenario; mobile fog is world-space." },
+  { usage: "/weather spawn heatwave --radius=3200", prefix: "/weather spawn heatwave", description: "Spawn a heatwave/haze scenario." },
   { usage: "/weather event inspect nearest", prefix: "/weather event inspect nearest", description: "Inspect nearest event." },
   { usage: "/weather event track nearest", prefix: "/weather event track nearest", description: "Track nearest event." },
   { usage: "/weather ground inspect", prefix: "/weather ground inspect", description: "Inspect ground weather state." },
@@ -360,6 +370,9 @@ export class CommandSystem {
 
   private executeWeather(parts: string[]): void {
     const context = this.context!;
+    if (this.executeEnvironmentWeather(parts)) {
+      return;
+    }
     // Routage prioritaire vers le moteur régional (debug/set/wind/spawn/render).
     // Sinon on retombe sur l'ancien format `/weather <type> [durée]`.
     if (this.weatherCommands?.handle(parts)) {
@@ -384,6 +397,101 @@ export class CommandSystem {
     context.weather.setWeather(type, Number.isFinite(duration) ? duration : undefined);
     this.spawnRegionalWeather(type, type === "thunderstorm" || type === "blizzard" ? 1 : 0.82);
     this.write(`Weather changed to ${type}${Number.isFinite(duration) ? ` for ${duration} seconds` : ""}.`);
+  }
+
+  private executeEnvironmentWeather(parts: string[]): boolean {
+    const context = this.context!;
+    const environment = context.environmentDirector;
+    if (parts[1] === "debug" && (parts[2] === "environment" || parts[2] === "thermal" || parts[2] === "fog" || parts[2] === "snow")) {
+      if (!environment) {
+        this.write("Environment director unavailable.");
+        return true;
+      }
+      if (parts[2] === "fog") {
+        this.write(environment.fogDebugText());
+      } else if (parts[2] === "snow") {
+        const s = environment.state;
+        this.write(s ? `Snow debug depth=${s.surface.snowDepth.toFixed(2)} burial=${s.surface.snowBurial.toFixed(2)} compacted=${s.surface.compactedSnow.toFixed(2)} frost=${s.surface.frost.toFixed(2)} temp=${s.surface.surfaceTemperature.toFixed(1)}C` : "Environment unavailable.");
+      } else {
+        this.write(environment.debugText());
+      }
+      return true;
+    }
+    if (parts[1] === "set" && parts[2] === "season") {
+      const value = parts[3] as SeasonId | "auto" | undefined;
+      if (value === "auto" || value === "spring" || value === "summer" || value === "autumn" || value === "winter") {
+        context.seasonSystem?.setSeason(value);
+        this.write(`Environment season set to ${value}.`);
+      } else {
+        this.write("Usage: /weather set season auto|spring|summer|autumn|winter");
+      }
+      return true;
+    }
+    if (parts[1] === "set" && parts[2] === "temperature") {
+      if (!environment) {
+        this.write("Environment director unavailable.");
+        return true;
+      }
+      if (parts[3] === "auto" || parts[3] === undefined) {
+        environment.forceTemperature(null);
+        this.write("Environment temperature released to weather simulation.");
+        return true;
+      }
+      const value = Number(parts[3]);
+      if (Number.isFinite(value)) {
+        environment.forceTemperature(value);
+        this.write(`Environment temperature forced to ${value.toFixed(1)}C.`);
+      } else {
+        this.write("Usage: /weather set temperature -8|auto");
+      }
+      return true;
+    }
+    if (parts[1] === "set" && parts[2] === "wind") {
+      if (!environment) {
+        this.write("Environment director unavailable.");
+        return true;
+      }
+      if (parts[3] === "auto") {
+        environment.forceWind(null);
+        this.write("Environment wind released to weather simulation.");
+        return true;
+      }
+      const speed = Number(parts[3]);
+      const direction = this.directionToDegrees(parts[4] ?? "north");
+      if (Number.isFinite(speed) && direction !== null) {
+        environment.forceWind(speed, direction);
+        this.write(`Environment wind forced to ${speed.toFixed(1)} blk/s from ${parts[4] ?? "north"} (${direction}deg).`);
+      } else {
+        this.write("Usage: /weather set wind 12 nw | /weather set wind auto");
+      }
+      return true;
+    }
+    return false;
+  }
+
+  private directionToDegrees(raw: string): number | null {
+    const normalized = raw.toLowerCase();
+    const named: Record<string, number> = {
+      north: 0,
+      n: 0,
+      northeast: 45,
+      ne: 45,
+      east: 90,
+      e: 90,
+      southeast: 135,
+      se: 135,
+      south: 180,
+      s: 180,
+      southwest: 225,
+      sw: 225,
+      west: 270,
+      w: 270,
+      northwest: 315,
+      nw: 315,
+    };
+    if (normalized in named) return named[normalized];
+    const numeric = Number(raw);
+    return Number.isFinite(numeric) ? ((numeric % 360) + 360) % 360 : null;
   }
 
   private spawnRegionalWeather(type: WeatherType, intensity: number): void {
