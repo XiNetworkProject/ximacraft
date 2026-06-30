@@ -851,8 +851,16 @@ export class CommandSystem {
       case "flow":
         return world.terrain.macro.hydrology.rivers.debugAt(x, z);
       case "roads": {
-        const road = world.terrain.regions.roadSampleAt(x, z, height, biome, (wx, wz) => world.getSurfaceHeight(wx, wz));
-        return `Road x=${x} z=${z} strength=${road.strength.toFixed(2)} dir=${road.dirX.toFixed(2)},${road.dirZ.toFixed(2)} waterCrossing=${Math.max(hydro.river, hydro.stream, hydro.lake).toFixed(2)} surfaceBiome=${biome}`;
+        const roadWater = {
+          strength: Math.max(hydro.river, hydro.stream * 0.7, hydro.lake * 0.6, hydro.wetland * 0.36),
+          width: hydro.width,
+          flowX: hydro.flowX,
+          flowZ: hydro.flowZ,
+          current: hydro.current,
+          category: hydro.category,
+        };
+        const road = world.terrain.regions.roadSampleAt(x, z, height, biome, (wx, wz) => world.getSurfaceHeight(wx, wz), () => roadWater);
+        return `Road x=${x} z=${z} strength=${road.strength.toFixed(2)} kind=${road.kind} width=${road.width.toFixed(1)} importance=${road.importance.toFixed(2)} dir=${road.dirX.toFixed(2)},${road.dirZ.toFixed(2)} bridge=${road.bridge ? "yes" : "no"} water=${roadWater.strength.toFixed(2)} biome=${biome}`;
       }
       case "settlement": {
         const settlement = world.terrain.regions.settlementAt(x, z, height, biome, (wx, wz) => world.getSurfaceHeight(wx, wz));

@@ -10,6 +10,7 @@ import { StructureGenerator } from "./StructureGenerator";
 import { LivingWorldGenerator } from "./LivingWorldGenerator";
 import { MacroWorldPlanner } from "./MacroWorldPlanner";
 import { RegionPlanner } from "./RegionPlanner";
+import type { RoadWaterContext } from "./settlement/RoadTypes";
 
 export class TerrainGenerator {
   readonly noise: Noise;
@@ -39,6 +40,19 @@ export class TerrainGenerator {
   riverStrength(x: number, z: number): number {
     const macro = this.macro.sample(x, z);
     return clamp(Math.max(macro.hydrology.river, macro.hydrology.stream * 0.58, macro.hydrology.lake * 0.72), 0, 1);
+  }
+
+  private roadWaterContext(x: number, z: number): RoadWaterContext {
+    const hydro = this.macro.sample(x, z).hydrology;
+    const strength = clamp(Math.max(hydro.river, hydro.stream * 0.7, hydro.lake * 0.6, hydro.wetland * 0.36), 0, 1);
+    return {
+      strength,
+      width: hydro.width,
+      flowX: hydro.flowX,
+      flowZ: hydro.flowZ,
+      current: hydro.current,
+      category: hydro.category,
+    };
   }
 
   generateChunk(chunk: Chunk): void {
@@ -91,7 +105,7 @@ export class TerrainGenerator {
         const macro = this.macro.sample(x, z);
         const hydro = macro.hydrology;
         const region = height > SEA_LEVEL + 2
-          ? this.regions.sampleColumn(x, z, height, biomeId, (wx, wz) => this.getHeight(wx, wz), Math.max(hydro.river, hydro.stream * 0.7, hydro.lake * 0.6))
+          ? this.regions.sampleColumn(x, z, height, biomeId, (wx, wz) => this.getHeight(wx, wz), this.roadWaterContext(x, z), (wx, wz) => this.roadWaterContext(wx, wz))
           : null;
         if (region?.surface) {
           chunk.setLocal(lx, height, lz, region.surface);

@@ -3,6 +3,14 @@ import { clamp } from "../utils/MathUtils";
 import { Noise } from "../utils/Noise";
 import { BiomeId, isMountainBiome } from "./BiomeGenerator";
 import { BlockId } from "./BlockTypes";
+import { BridgePlanner } from "./settlement/BridgePlanner";
+import { FordPlanner } from "./settlement/FordPlanner";
+import { RoadPathPlanner } from "./settlement/RoadPathPlanner";
+import { RoadRouter } from "./settlement/RoadRouter";
+import { RoadSurfacePlanner } from "./settlement/RoadSurfacePlanner";
+import type { RoadSample, RoadWaterContext } from "./settlement/RoadTypes";
+import { SettlementGraph } from "./settlement/SettlementGraph";
+import { VillageLayoutPlanner } from "./settlement/VillageLayoutPlanner";
 
 export type SettlementKind = "hamlet" | "village";
 
@@ -25,30 +33,55 @@ export type RegionColumnPlan = {
   blocksDecoration: boolean;
 };
 
-type RoadSample = {
-  strength: number;
-  dirX: number;
-  dirZ: number;
-  bridge: boolean;
-};
-
 export class RegionPlanner {
   private readonly settlementCellCache = new Map<string, SettlementPlan | null>();
   private readonly settlementAcceptanceCache = new Map<string, boolean>();
+  private readonly bridgePlanner: BridgePlanner;
+  private readonly fordPlanner: FordPlanner;
+  private readonly graph: SettlementGraph;
+  private readonly roadPathPlanner: RoadPathPlanner;
+  private readonly router: RoadRouter;
+  private readonly roadSurfacePlanner: RoadSurfacePlanner;
+  private readonly villageLayoutPlanner: VillageLayoutPlanner;
 
-  constructor(private readonly noise: Noise) {}
+  constructor(private readonly noise: Noise) {
+    this.bridgePlanner = new BridgePlanner(noise);
+    this.fordPlanner = new FordPlanner();
+    this.graph = new SettlementGraph(noise);
+    this.roadPathPlanner = new RoadPathPlanner(noise);
+    this.router = new RoadRouter(this.roadPathPlanner);
+    this.roadSurfacePlanner = new RoadSurfacePlanner(noise);
+    this.villageLayoutPlanner = new VillageLayoutPlanner(noise);
+  }
 
-  sampleColumn(x: number, z: number, height: number, biome: BiomeId, getHeight: (x: number, z: number) => number, watercourse = 0): RegionColumnPlan {
+  sampleColumn(
+    x: number,
+    z: number,
+    height: number,
+    biome: BiomeId,
+    getHeight: (x: number, z: number) => number,
+    watercourse: number | RoadWaterContext = 0,
+    getWater?: (x: number, z: number) => RoadWaterContext,
+  ): RegionColumnPlan {
+    const water = this.normalizeWater(watercourse);
+    const waterAt = getWater ?? (() => water);
     const settlement = this.settlementAt(x, z, height, biome, getHeight);
     if (settlement) {
-      return this.settlementColumn(settlement, x, z, height);
+      return this.villageLayoutPlanner.columnAt(settlement, x, z, height, biome, water);
     }
-    const road = this.roadSampleAt(x, z, height, biome, getHeight);
+    const road = this.roadSampleAt(x, z, height, biome, getHeight, waterAt);
     if (road.strength > 0.78) {
-      if (watercourse > 0.45) {
-        return this.bridgeColumn(x, z, road);
+      if (water.strength > 0.45) {
+        if (this.fordPlanner.canFord(road, water)) return this.fordPlanner.columnAt(x, z, road, water);
+        return this.bridgePlanner.columnAt(x, z, road, water);
       }
-      return { surface: road.strength > 0.92 ? BlockId.GRAVEL_PATH : BlockId.DIRT_PATH, blocks: [], blocksDecoration: true };
+      const slope = Math.max(
+        Math.abs(getHeight(x + 5, z) - height),
+        Math.abs(getHeight(x - 5, z) - height),
+        Math.abs(getHeight(x, z + 5) - height),
+        Math.abs(getHeight(x, z - 5) - height),
+      );
+      return { surface: this.roadSurfacePlanner.surfaceAt(x, z, road.kind, biome, road.strength, slope), blocks: [], blocksDecoration: true };
     }
     return { blocks: [], blocksDecoration: false };
   }
@@ -73,30 +106,43 @@ export class RegionPlanner {
     return null;
   }
 
-  roadStrengthAt(x: number, z: number, height: number, biome: BiomeId, getHeight: (x: number, z: number) => number): number {
-    return this.roadSampleAt(x, z, height, biome, getHeight).strength;
+  roadStrengthAt(
+    x: number,
+    z: number,
+    height: number,
+    biome: BiomeId,
+    getHeight: (x: number, z: number) => number,
+    getWater?: (x: number, z: number) => RoadWaterContext,
+  ): number {
+    return this.roadSampleAt(x, z, height, biome, getHeight, getWater).strength;
   }
 
-  roadSampleAt(x: number, z: number, height: number, biome: BiomeId, getHeight: (x: number, z: number) => number): RoadSample {
+  roadSampleAt(
+    x: number,
+    z: number,
+    height: number,
+    biome: BiomeId,
+    getHeight: (x: number, z: number) => number,
+    getWater: (x: number, z: number) => RoadWaterContext = () => this.normalizeWater(0),
+  ): RoadSample {
     if (height <= SEA_LEVEL + 2 || isMountainBiome(biome) || biome === "lake" || biome === "mountain_lake") {
-      return { strength: 0, dirX: 1, dirZ: 0, bridge: false };
+      return { strength: 0, dirX: 1, dirZ: 0, kind: "trail", width: 0, importance: 0, bridge: false };
     }
     const cellSize = 1280;
     const cellX = Math.floor(x / cellSize);
     const cellZ = Math.floor(z / cellSize);
-    let best: RoadSample = { strength: 0, dirX: 1, dirZ: 0, bridge: false };
+    let best: RoadSample = { strength: 0, dirX: 1, dirZ: 0, kind: "trail", width: 0, importance: 0, bridge: false };
     for (let dz = -1; dz <= 1; dz += 1) {
       for (let dx = -1; dx <= 1; dx += 1) {
         const a = this.planSettlementCell(cellX + dx, cellZ + dz, cellSize);
         if (!a || !this.acceptsSettlement(a, getHeight)) continue;
-        const neighbors: Array<[number, number]> = [[1, 0], [0, 1], [-1, 0], [0, -1]];
-        for (const [nx, nz] of neighbors) {
-          const b = this.planSettlementCell(cellX + dx + nx, cellZ + dz + nz, cellSize);
-          if (!b) continue;
-          const linkRoll = this.noise.random2D((cellX + dx) * 419 + nx * 17, (cellZ + dz) * 419 + nz * 29);
-          if (linkRoll > 0.72) continue;
-          const d = this.distanceToOrganicPath(x, z, a, b);
-          const width = a.kind === "village" || b.kind === "village" ? 4.7 : 3.15;
+        for (const link of this.graph.linksFor(cellX + dx, cellZ + dz, a)) {
+          const b = this.planSettlementCell(cellX + dx + link.dx, cellZ + dz + link.dz, cellSize);
+          if (!b || !this.acceptsSettlement(b, getHeight)) continue;
+          const importance = Math.max(link.importance, this.graph.importance(a, b, dx * 17 + dz * 29));
+          const path = this.router.route(a, b, biome, getHeight, getWater, importance);
+          const d = this.router.sample(x, z, path);
+          const width = path.width;
           if (d.distance < width) {
             const roadHeight = getHeight(Math.floor(x), Math.floor(z));
             const localSlope = Math.max(
@@ -105,12 +151,34 @@ export class RegionPlanner {
             );
             const slopePenalty = localSlope > 5 ? 0.44 : localSlope > 3 ? 0.74 : 1;
             const strength = clamp(1 - d.distance / width, 0, 1) * slopePenalty;
-            if (strength > best.strength) best = { strength, dirX: d.dirX, dirZ: d.dirZ, bridge: false };
+            if (strength > best.strength) {
+              best = {
+                strength,
+                dirX: d.dirX,
+                dirZ: d.dirZ,
+                kind: path.kind,
+                width: path.width,
+                importance: path.importance,
+                bridge: getWater(x, z).strength > 0.45,
+              };
+            }
           }
         }
       }
     }
     return best;
+  }
+
+  private normalizeWater(water: number | RoadWaterContext): RoadWaterContext {
+    if (typeof water !== "number") return water;
+    return {
+      strength: water,
+      width: water * 11,
+      flowX: 0,
+      flowZ: 0,
+      current: water * 0.5,
+      category: water > 0.72 ? "river" : water > 0.44 ? "stream" : "dry",
+    };
   }
 
   private bridgeColumn(x: number, z: number, road: RoadSample): RegionColumnPlan {
@@ -138,8 +206,8 @@ export class RegionPlanner {
     const margin = 250;
     const centerX = cellX * cellSize + margin + Math.floor(this.noise.random2D(cellX * 337 - 19, cellZ * 337 + 37) * (cellSize - margin * 2));
     const centerZ = cellZ * cellSize + margin + Math.floor(this.noise.random2D(cellX * 353 + 23, cellZ * 353 - 29) * (cellSize - margin * 2));
-    const kind: SettlementKind = roll < 0.22 ? "village" : "hamlet";
-    const plan = { id: `${cellX}:${cellZ}`, kind, centerX, centerZ, radius: kind === "village" ? 104 : 58 };
+    const kind: SettlementKind = roll < 0.26 ? "village" : "hamlet";
+    const plan = { id: `${cellX}:${cellZ}`, kind, centerX, centerZ, radius: kind === "village" ? 142 : 72 };
     this.settlementCellCache.set(cacheKey, plan);
     return plan;
   }
@@ -155,7 +223,7 @@ export class RegionPlanner {
       Math.abs(getHeight(x, z + 8) - h),
       Math.abs(getHeight(x, z - 8) - h),
     );
-    const accepted = h > SEA_LEVEL + 4 && slope <= 12;
+    const accepted = h > SEA_LEVEL + 4 && slope <= 14;
     this.settlementAcceptanceCache.set(plan.id, accepted);
     return accepted;
   }
