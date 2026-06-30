@@ -30,6 +30,7 @@ import { WorldPhenologySystem } from "../src/environment/WorldPhenologySystem";
 import { FogBankSystem } from "../src/environment/FogBankSystem";
 import { dewPointC } from "../src/environment/EnvironmentDirector";
 import { SeasonState } from "../src/living/SeasonSystem";
+import { WeatherRadarHistory } from "../src/weather/map/WeatherRadarHistory";
 
 let passed = 0;
 let failed = 0;
@@ -573,6 +574,83 @@ console.log("\n[world] macro-biomes, forest patches and bridgeable roads are coh
   }
   check("region planner can produce multi-chunk settlements", sawSettlement);
   check("road planner materializes bridge deck blocks when crossing water", sawBridgeableRoad);
+}
+
+// ============================================================================
+console.log("\n[radar] history records real simulation snapshots for replay");
+{
+  const engine = new WeatherEngine();
+  engine.setObserver(0, 0);
+  // Intervalle court + petite grille pour un test rapide et déterministe.
+  const history = new WeatherRadarHistory({
+    recordIntervalSeconds: 2,
+    retentionSeconds: 20,
+    radius: 2048,
+    cellSize: 512,
+  });
+  // Un orage proche fait évoluer le champ de précipitation dans le temps.
+  engine.spawnStormCell(1400, 0, 0);
+
+  check("history starts empty", !history.hasData(), `count=${history.count}`);
+
+  // ~12 s de simulation avec captures régulières.
+  for (let t = 0; t < 12; t += 0.5) {
+    engine.update(0.5);
+    history.update(engine, 0, 0);
+  }
+  check("history records multiple snapshots", history.count >= 3, `count=${history.count}`);
+  check("recorded span is positive and bounded by retention", history.spanSeconds > 0 && history.spanSeconds <= 22, `span=${history.spanSeconds.toFixed(1)}`);
+  check("oldest snapshot is in the past", history.oldestOffset(engine) < 0, `oldest=${history.oldestOffset(engine).toFixed(1)}`);
+
+  // Échantillon historique au temps présent == champ réel (nœud de grille exact).
+  const live = engine.sampleAt(0, 0);
+  const replayedNow = history.sampleField(engine.state.time, 0, 0);
+  check("history sample at grid node matches the recorded field", !!replayedNow && Math.abs(replayedNow.precipitation - live.precipitation) < 1e-3, `replay=${replayedNow?.precipitation.toFixed(3)} live=${live.precipitation.toFixed(3)}`);
+
+  // Le champ a évolué : un instant passé diffère du présent (l'orage a grossi).
+  const past = history.sampleField(engine.state.time - 8, 0, 0);
+  check("a past field sample is available and finite", !!past && Number.isFinite(past.precipitation), `past=${past?.precipitation}`);
+
+  // Requête plus ancienne que le plus ancien instantané → bornée (pas de null).
+  const tooOld = history.sampleField(engine.state.time - 9999, 0, 0);
+  check("queries older than history clamp to the oldest snapshot", !!tooOld, `tooOld=${tooOld?.precipitation}`);
+
+  // Interpolation temporelle bornée entre deux instantanés.
+  const newest = engine.state.time;
+  const a = history.sampleField(newest - 4, 0, 0)!;
+  const b = history.sampleField(newest - 2, 0, 0)!;
+  const mid = history.sampleField(newest - 3, 0, 0)!;
+  const lo = Math.min(a.precipitation, b.precipitation) - 1e-3;
+  const hi = Math.max(a.precipitation, b.precipitation) + 1e-3;
+  check("interpolated sample lies between bracketing snapshots", mid.precipitation >= lo && mid.precipitation <= hi, `mid=${mid.precipitation.toFixed(3)} lo=${lo.toFixed(3)} hi=${hi.toFixed(3)}`);
+
+  // Éviction : après un long run, l'historique reste borné par la rétention.
+  for (let t = 0; t < 40; t += 0.5) {
+    engine.update(0.5);
+    history.update(engine, 0, 0);
+  }
+  check("retention bounds the snapshot count (ring buffer)", history.spanSeconds <= 22, `span=${history.spanSeconds.toFixed(1)}`);
+}
+
+// ============================================================================
+console.log("\n[radar] recorded lightning strikes replay at their own time");
+{
+  const engine = new WeatherEngine();
+  engine.setObserver(0, 0);
+  const history = new WeatherRadarHistory({ recordIntervalSeconds: 2, retentionSeconds: 30, radius: 1024, cellSize: 512 });
+  engine.update(1);
+  history.update(engine, 0, 0);
+  const strikeTime = engine.state.time;
+  history.recordStrike(120, -80, 0.9, strikeTime);
+  // Avance jusqu'à la prochaine capture pour drainer l'éclair dans un instantané.
+  for (let t = 0; t < 4; t += 0.5) {
+    engine.update(0.5);
+    history.update(engine, 0, 0);
+  }
+  const strikes = history.strikesAt(strikeTime);
+  check("a recorded strike is retrievable near its timestamp", strikes.some((s) => s.x === 120 && s.z === -80), `count=${strikes.length}`);
+  const far = history.strikesAt(strikeTime + 1000, 1);
+  check("strikes far from the cursor time are not returned", far.length === 0, `far=${far.length}`);
 }
 
 // ============================================================================

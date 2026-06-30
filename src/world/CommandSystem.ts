@@ -5,6 +5,7 @@ import { World } from "./World";
 import { WeatherSystem } from "./WeatherSystem";
 import { MoonPhase, WeatherType } from "./WeatherTypes";
 import { WeatherEngine } from "../weather/WeatherEngine";
+import { vectorToCompass } from "../weather/WeatherMath";
 import { WeatherCommands, WeatherRenderToggle, CloudPopulationDiagnostics, LightningDiagnostics } from "../commands/WeatherCommands";
 import { CloudSystem } from "../weather/clouds/CloudSystem";
 import { GroundAccumulationSystem } from "../weather/ground/GroundAccumulationSystem";
@@ -21,6 +22,7 @@ import { AmbientBiomeAudioSystem } from "../living/AmbientBiomeAudioSystem";
 import { WorldMemorySystem } from "../living/WorldMemorySystem";
 import { WildlifeSpecies } from "../living/LivingWorldTypes";
 import { EnvironmentDirector } from "../environment/EnvironmentDirector";
+import { WeatherRadarHistory } from "../weather/map/WeatherRadarHistory";
 import { CHUNK_SIZE, WORLD_HEIGHT } from "../utils/Constants";
 import { BlockId, isLegacyTrack, isPlant } from "./BlockTypes";
 import { BiomeId, isForestBiome, isMountainBiome } from "./BiomeGenerator";
@@ -66,6 +68,8 @@ export type CommandContext = {
   ambientBiomeAudio?: AmbientBiomeAudioSystem;
   worldMemory?: WorldMemorySystem;
   environmentDirector?: EnvironmentDirector;
+  /** Historique radar (pour `/weather debug radar` et la relecture). */
+  radarHistory?: WeatherRadarHistory;
 };
 
 const weatherTypes: WeatherType[] = [
@@ -119,7 +123,7 @@ export const COMMANDS: CommandDefinition[] = [
   { usage: "/weather scenario clear_day|fair_cumulus|warm_front|isolated_thunderstorm|morning_fog|steady_snow|blizzard|...", prefix: "/weather scenario", description: "Drive a full multi-phase weather scenario (clear, cumulus, fronts, storms, snow, fog, haze)." },
   { usage: "/weather scenario clear_spring|summer_heatwave|autumn_rain|winter_fog|lake_morning_mist|post_storm_clearing", prefix: "/weather scenario", description: "Seasonal environment scenarios coupled to the world state." },
   { usage: "/weather debug scene|plan|layers|precipitation|cloud_population|lightning", prefix: "/weather debug scene", description: "Inspect the multi-axis weather scene, plan, layers, precipitation and lightning." },
-  { usage: "/weather debug cell|events|ground|wind|director|environment|thermal|fog", prefix: "/weather debug", description: "Inspect regional weather, environment, comfort and fog banks." },
+  { usage: "/weather debug cell|events|ground|wind|director|environment|thermal|fog|radar|fronts|fauna|audio", prefix: "/weather debug", description: "Inspect regional weather, environment, comfort, fog, radar history, fronts, fauna and audio." },
   { usage: "/weather set cloudy|clearing|rain|storm radius=1000", prefix: "/weather set", description: "Spawn regional weather." },
   { usage: "/weather set season spring|summer|autumn|winter|auto", prefix: "/weather set season", description: "Force season through the environment director." },
   { usage: "/weather set temperature -8|auto", prefix: "/weather set temperature", description: "Force or release local environment temperature." },
@@ -429,6 +433,28 @@ export class CommandSystem {
       }
       return true;
     }
+    if (parts[1] === "debug" && parts[2] === "radar") {
+      const history = context.radarHistory;
+      this.write(history ? history.debugText(context.weatherEngine) : "Radar history unavailable.");
+      return true;
+    }
+    if (parts[1] === "debug" && parts[2] === "fronts") {
+      this.debugFronts();
+      return true;
+    }
+    if (parts[1] === "debug" && parts[2] === "fauna") {
+      const living = context.livingWorld;
+      this.write(living ? living.debugText() : "Living world system unavailable.");
+      if (environment?.state) {
+        const f = environment.state.fauna;
+        this.write(`Fauna field: ${f.label} activity=${f.activity.toFixed(2)} birds=${f.birds.toFixed(2)} insects=${f.insects.toFixed(2)} amphibians=${f.amphibians.toFixed(2)} fish=${f.fish.toFixed(2)} sheltering=${f.sheltering.toFixed(2)}`);
+      }
+      return true;
+    }
+    if (parts[1] === "debug" && parts[2] === "audio") {
+      this.write(context.ambientBiomeAudio?.debug() ?? "Ambience audio unavailable.");
+      return true;
+    }
     if (parts[1] === "set" && parts[2] === "season") {
       const value = parts[3] as SeasonId | "auto" | undefined;
       if (value === "auto" || value === "spring" || value === "summer" || value === "autumn" || value === "winter") {
@@ -479,6 +505,29 @@ export class CommandSystem {
       return true;
     }
     return false;
+  }
+
+  /** /weather debug fronts : liste les fronts / lignes de grains actifs. */
+  private debugFronts(): void {
+    const engine = this.context!.weatherEngine;
+    const fronts = engine
+      .getActiveEvents()
+      .filter((event) => event.type === "cold_front" || event.type === "warm_front" || event.type === "squall_line");
+    if (fronts.length === 0) {
+      this.write("No active fronts or squall lines.");
+      return;
+    }
+    const observer = engine.getObserver();
+    this.write(`-- Active fronts / squall lines: ${fronts.length} --`);
+    for (const front of fronts.slice(0, 7)) {
+      const distance = Math.round(Math.hypot(front.x - observer.x, front.z - observer.z));
+      const compass = vectorToCompass(front.dirX, front.dirZ);
+      this.write(
+        `#${front.id} ${front.type} pos(${Math.round(front.x)},${Math.round(front.z)}) ` +
+          `dir ${compass} spd ${front.speed.toFixed(0)} int ${front.intensity.toFixed(2)} ` +
+          `dist ${distance}blk phase ${front.phase}`,
+      );
+    }
   }
 
   private directionToDegrees(raw: string): number | null {

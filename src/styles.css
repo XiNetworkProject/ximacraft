@@ -983,6 +983,47 @@ input {
   font-weight: 700;
 }
 
+/* Contrôle de relecture radar : ligne de boutons + curseur pleine largeur. */
+.weather-timeline {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  overflow-x: hidden;
+}
+
+.weather-timeline-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.weather-timeline-speed {
+  display: flex;
+  gap: 2px;
+}
+
+.weather-timeline-play.active {
+  background: #fde68a;
+  color: #0f172a;
+  font-weight: 700;
+}
+
+.weather-timeline-label {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: #fde68a;
+  min-width: 96px;
+  text-align: right;
+}
+
+.weather-timeline-slider {
+  width: 100%;
+  accent-color: #38bdf8;
+  cursor: pointer;
+}
+
 .weather-map-ui main {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 300px;

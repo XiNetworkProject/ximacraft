@@ -23,6 +23,7 @@ import { ForecastSystem } from "../weather/forecast/ForecastSystem";
 import type { ForecastTimeline } from "../weather/forecast/ForecastTimeline";
 import { WeatherAlertSystem } from "../weather/alerts/WeatherAlertSystem";
 import { WeatherMapDataBuilder } from "../weather/map/WeatherMapData";
+import { WeatherRadarHistory } from "../weather/map/WeatherRadarHistory";
 import { BiomeWeatherModifier } from "../weather/biome/BiomeWeatherModifier";
 import { WeatherAudioSystem } from "../weather/audio/WeatherAudioSystem";
 import { WeatherRenderer } from "../render/weather/WeatherRenderer";
@@ -115,7 +116,10 @@ export class Game {
   private readonly seasonSystem = new SeasonSystem();
   private readonly environmentDirector = new EnvironmentDirector(this.weatherEngine, this.seasonSystem, () => this.currentSeed);
   private readonly alertSystem = new WeatherAlertSystem();
-  private readonly weatherMapData = new WeatherMapDataBuilder(this.weatherEngine, this.forecastSystem);
+  // Historique radar : enregistre de vrais instantanés de la simulation pour la
+  // relecture (boucle des ~30 dernières minutes), distinct des prévisions.
+  private readonly radarHistory = new WeatherRadarHistory();
+  private readonly weatherMapData = new WeatherMapDataBuilder(this.weatherEngine, this.forecastSystem, this.radarHistory);
   private readonly weatherRenderer: WeatherRenderer;
   private readonly fogBankRenderer: FogBankRenderer;
   // Ombres de nuages projetées au sol (terrain/feuillage/eau).
@@ -447,6 +451,7 @@ export class Game {
   private async setupWorld(seed: string, saveData?: SaveData, newWorldOptions?: MainMenuNewWorldOptions): Promise<void> {
     this.disposeWorld();
     this.weatherEngine.reset();
+    this.radarHistory.reset();
     this.convectiveClouds.clear();
     this.stormCloudMasses.clear();
     this.loading("climate", 0.2);
@@ -533,6 +538,8 @@ export class Game {
     this.updateWeatherEnvironment(world);
     this.weatherDirector.update(weatherDelta);
     this.weatherEngine.update(weatherDelta);
+    // Enregistre l'historique radar (capture cadencée par le temps simulé).
+    this.radarHistory.update(this.weatherEngine, this.player.position.x, this.player.position.z);
     this.weatherDebugProbeTimer -= weatherDelta;
     if (this.weatherDebugProbeTimer <= 0) {
       this.weatherDebugProbeTimer = 0.5;
@@ -666,6 +673,7 @@ export class Game {
     for (const strike of this.lightning.update(delta, events, this.player.position.x, this.player.position.z)) {
       this.lightningRenderer.addStrike(strike, camera);
       this.cloudVolumeRenderer.addLightningStrike(strike);
+      this.radarHistory.recordStrike(strike.x, strike.z, strike.intensity, this.weatherEngine.state.time);
     }
     this.lightningRenderer.update(delta, camera);
     this.rainCurtains.update(delta, events, camera, sample.windX, sample.windZ);
@@ -1265,6 +1273,7 @@ export class Game {
       ambientBiomeAudio: this.biomeAmbience,
       worldMemory: this.worldMemory,
       environmentDirector: this.environmentDirector,
+      radarHistory: this.radarHistory,
     });
   }
 

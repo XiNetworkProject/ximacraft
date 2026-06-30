@@ -120,6 +120,8 @@ export class WeatherMapUI {
 
   update(delta: number): void {
     if (!this.isOpen()) return;
+    // Relecture : la lecture fait avancer le curseur (→ onChange → renderNow).
+    this.timeline.tick(delta);
     this.refresh -= delta;
     if (this.refresh <= 0) {
       this.refresh = 1.2;
@@ -167,6 +169,7 @@ export class WeatherMapUI {
     this.resizeCanvas();
     const data = this.dataProvider(this.timeOffset, this.center, this.radius);
     this.lastData = data;
+    this.timeline.setRange(data.historyOldestOffset, data.forecastMaxOffset);
     if (!this.center) this.center = { x: data.centerX, z: data.centerZ };
     this.context.clearRect(0, 0, this.canvas.width, this.canvas.height);
     this.context.fillStyle = "#071019";
@@ -183,10 +186,44 @@ export class WeatherMapUI {
     if (this.activeLayers.has("forecast")) this.drawEventTracks(data);
     if (this.activeLayers.has("alerts")) this.drawAlerts(data);
     if (this.activeLayers.has("wind")) this.drawWind(data);
+    this.drawStrikes(data);
     this.drawPlayer(data);
+    this.drawReplayBadge(data);
 
     this.forecastPanel.render(this.forecastProvider(this.center));
     this.alertPanel.render(this.alertProvider());
+  }
+
+  /** Éclairs enregistrés (relecture historique) : croix jaunes estompées. */
+  private drawStrikes(data: WeatherMapData): void {
+    if (data.strikes.length === 0) return;
+    const p = this.projection();
+    for (const strike of data.strikes) {
+      const alpha = Math.max(0.15, 1 - strike.age / 60);
+      const screen = p.worldToScreen(strike.x, strike.z);
+      const size = 4 + strike.intensity * 4;
+      this.context.strokeStyle = `rgba(255,240,140,${alpha.toFixed(3)})`;
+      this.context.lineWidth = 2;
+      this.context.beginPath();
+      this.context.moveTo(screen.x - size, screen.y);
+      this.context.lineTo(screen.x + size, screen.y);
+      this.context.moveTo(screen.x, screen.y - size);
+      this.context.lineTo(screen.x, screen.y + size);
+      this.context.stroke();
+    }
+  }
+
+  /** Bandeau "RELECTURE" quand on lit l'historique enregistré. */
+  private drawReplayBadge(data: WeatherMapData): void {
+    if (!data.historical) return;
+    const minutes = Math.abs(data.timeOffsetSeconds / 60);
+    const text = `⏪ RELECTURE  −${minutes.toFixed(1)} min`;
+    this.context.font = "600 13px system-ui, sans-serif";
+    const width = this.context.measureText(text).width + 18;
+    this.context.fillStyle = "rgba(8,14,22,0.78)";
+    this.context.fillRect(10, 10, width, 24);
+    this.context.fillStyle = "#fde68a";
+    this.context.fillText(text, 19, 27);
   }
 
   private drawWorldBackdrop(data: WeatherMapData): void {
