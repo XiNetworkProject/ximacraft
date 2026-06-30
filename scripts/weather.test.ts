@@ -654,6 +654,133 @@ console.log("\n[radar] recorded lightning strikes replay at their own time");
 }
 
 // ============================================================================
+console.log("\n[hydrology] rivers follow real terrain: downhill, accumulating, continuous");
+{
+  for (const seed of ["flow-seed-a", "flow-seed-b", "flow-seed-c"]) {
+    const gen = new TerrainGenerator(seed);
+    const flow = gen.macro.hydrology.rivers.flow;
+    const R = 40;
+    let downhillViolations = 0;
+    let accumViolations = 0;
+    let continuityViolations = 0;
+    let streamNodes = 0;
+    let riverNodes = 0;
+    for (let j = -R; j <= R; j += 1) {
+      for (let i = -R; i <= R; i += 1) {
+        const h = flow.nodeHeight(i, j);
+        const down = flow.downstream(i, j);
+        const cat = flow.classify(flow.accumulation(i, j));
+        if (cat === "stream") streamNodes += 1;
+        if (cat === "river" || cat === "great_river") riverNodes += 1;
+        if (down) {
+          // Le terrain descend (ou franchit un seuil peu profond), jamais une côte.
+          if (flow.nodeHeight(down.i, down.j) - h > flow.breachLimit) downhillViolations += 1;
+          // L'accumulation ne décroît jamais vers l'aval.
+          if (flow.accumulation(down.i, down.j) < flow.accumulation(i, j)) accumViolations += 1;
+          // Un chenal de rivière reste un chenal en aval (continuité).
+          if (cat === "river" || cat === "great_river") {
+            const downCat = flow.classify(flow.accumulation(down.i, down.j));
+            if (downCat === "dry" || downCat === "source") continuityViolations += 1;
+          }
+        }
+      }
+    }
+    check(`[${seed}] river flow never goes uphill past the breach sill`, downhillViolations === 0, `violations=${downhillViolations}`);
+    check(`[${seed}] flow accumulation never decreases downstream`, accumViolations === 0, `violations=${accumViolations}`);
+    check(`[${seed}] river channels stay continuous downstream`, continuityViolations === 0, `violations=${continuityViolations}`);
+    check(`[${seed}] streams form a real network (not barren)`, streamNodes > 120, `streams=${streamNodes} rivers=${riverNodes}`);
+  }
+}
+
+// ============================================================================
+console.log("\n[hydrology] traced channel widens downstream and starts higher than it ends");
+{
+  const gen = new TerrainGenerator("flow-trace-seed");
+  const flow = gen.macro.hydrology.rivers.flow;
+  // Trouve un nœud source/ruisseau, puis descend le chenal réel.
+  let startI = 0;
+  let startJ = 0;
+  let found = false;
+  for (let j = -40; j <= 40 && !found; j += 1) {
+    for (let i = -40; i <= 40 && !found; i += 1) {
+      const cat = flow.classify(flow.accumulation(i, j));
+      if (cat === "stream" && flow.downstream(i, j)) {
+        startI = i;
+        startJ = j;
+        found = true;
+      }
+    }
+  }
+  check("found a stream head to trace", found, `start=${startI},${startJ}`);
+
+  let ci = startI;
+  let cj = startJ;
+  const startHeight = flow.nodeHeight(ci, cj);
+  let startWidth = flow.widthFor(flow.accumulation(ci, cj));
+  let endWidth = startWidth;
+  let endHeight = startHeight;
+  let widthDrops = 0;
+  let maxCategoryRank = 0;
+  const rank: Record<string, number> = { dry: 0, source: 1, stream: 2, river: 3, great_river: 4 };
+  const seen = new Set<string>();
+  for (let step = 0; step < 80; step += 1) {
+    const key = `${ci},${cj}`;
+    if (seen.has(key)) break; // garde-fou anti-cycle de débordement
+    seen.add(key);
+    const w = flow.widthFor(flow.accumulation(ci, cj));
+    if (w < endWidth - 0.001) widthDrops += 1;
+    endWidth = w;
+    endHeight = flow.nodeHeight(ci, cj);
+    maxCategoryRank = Math.max(maxCategoryRank, rank[flow.classify(flow.accumulation(ci, cj))]);
+    const down = flow.downstream(ci, cj);
+    if (!down) break;
+    ci = down.i;
+    cj = down.j;
+  }
+  check("channel width is non-decreasing downstream", widthDrops === 0, `drops=${widthDrops} start=${startWidth.toFixed(1)} end=${endWidth.toFixed(1)}`);
+  check("channel grows wider from source to mouth", endWidth >= startWidth, `start=${startWidth.toFixed(1)} end=${endWidth.toFixed(1)}`);
+  check("source sits at or above the mouth altitude", startHeight >= endHeight, `start=${startHeight} end=${endHeight}`);
+  check("traced channel reaches at least a stream class", maxCategoryRank >= 2, `rank=${maxCategoryRank}`);
+}
+
+// ============================================================================
+console.log("\n[hydrology] flow network is seed-deterministic and coupled to carved terrain");
+{
+  const a = new TerrainGenerator("flow-determinism");
+  const b = new TerrainGenerator("flow-determinism");
+  let sameFlow = true;
+  let sameAccum = true;
+  for (let j = -20; j <= 20; j += 1) {
+    for (let i = -20; i <= 20; i += 1) {
+      sameFlow &&= a.macro.hydrology.rivers.flow.flowDir(i, j) === b.macro.hydrology.rivers.flow.flowDir(i, j);
+      sameAccum &&= a.macro.hydrology.rivers.flow.accumulation(i, j) === b.macro.hydrology.rivers.flow.accumulation(i, j);
+    }
+  }
+  check("flow directions repeat exactly for the same seed", sameFlow);
+  check("flow accumulation repeats exactly for the same seed", sameAccum);
+
+  // Couplage au terrain : là où une rivière coule, le terrain est creusé et noyé.
+  const gen = new TerrainGenerator("flow-couple");
+  let carvedChannels = 0;
+  let floodedChannels = 0;
+  let channelSamples = 0;
+  for (let z = -2400; z <= 2400 && channelSamples < 40; z += 24) {
+    for (let x = -2400; x <= 2400 && channelSamples < 40; x += 24) {
+      const rough = gen.macro.roughHeight(x, z);
+      const macro = gen.macro.sample(x, z);
+      if (macro.hydrology.river > 0.5) {
+        channelSamples += 1;
+        if (macro.altitude <= rough) carvedChannels += 1;
+        if (macro.hydrology.waterLevel >= macro.altitude) floodedChannels += 1;
+      }
+    }
+  }
+  check("river columns were actually found in a broad scan", channelSamples > 5, `samples=${channelSamples}`);
+  check("river beds are carved at or below the rough terrain", channelSamples > 0 && carvedChannels === channelSamples, `carved=${carvedChannels}/${channelSamples}`);
+  check("river channels hold water at or above the bed", channelSamples > 0 && floodedChannels === channelSamples, `flooded=${floodedChannels}/${channelSamples}`);
+}
+
+// ============================================================================
 console.log(`\n=== weather atlas tests: ${passed} passed, ${failed} failed ===`);
 if (failed > 0) {
   console.log("Failures:\n - " + failures.join("\n - "));

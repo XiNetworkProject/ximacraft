@@ -155,7 +155,7 @@ export const COMMANDS: CommandDefinition[] = [
   { usage: "/world regenerate-decoration", prefix: "/world regenerate-decoration", description: "Clean legacy tracks and regenerate loaded chunk decoration." },
   { usage: "/world regenerate decoration", prefix: "/world regenerate decoration", description: "Alias for decoration cleanup/regeneration." },
   { usage: "/world regenerate terrain-preview", prefix: "/world regenerate terrain-preview", description: "Preview local macro terrain, hydrology and biome without changing saves." },
-  { usage: "/world debug decorations|hydrology|roads|settlement|forest", prefix: "/world debug ", description: "Inspect terrain planners at the player." },
+  { usage: "/world debug decorations|hydrology|flow|roads|settlement|forest", prefix: "/world debug ", description: "Inspect terrain planners at the player." },
   { usage: "/world biome debug", prefix: "/world biome debug", description: "Inspect macro climate, local biome and micro-biome at the player." },
   { usage: "/world biome map", prefix: "/world biome map", description: "Print a compact biome map around the player." },
   { usage: "/world biome locate forest|village|river|lake|bridge|structure|mountain", prefix: "/world biome locate", description: "Locate the nearest broad biome/feature from the real generator." },
@@ -719,7 +719,7 @@ export class CommandSystem {
       this.write(this.worldDebug(parts[2] ?? "decorations"));
       return;
     }
-    this.write("Usage: /world regen loaded | /world biome debug|map|locate|regenerate | /world cleanup generated-tracks | /world regenerate-decoration | /world regenerate decoration|terrain-preview | /world debug decorations|hydrology|roads|settlement|forest");
+    this.write("Usage: /world regen loaded | /world biome debug|map|locate|regenerate | /world cleanup generated-tracks | /world regenerate-decoration | /world regenerate decoration|terrain-preview | /world debug decorations|hydrology|flow|roads|settlement|forest");
   }
 
   private executeWorldBiome(parts: string[]): void {
@@ -848,6 +848,8 @@ export class CommandSystem {
         return this.debugDecorationSummary();
       case "hydrology":
         return `Hydrology x=${x} z=${z} y=${height} category=${hydro.category} river=${hydro.river.toFixed(2)} stream=${hydro.stream.toFixed(2)} lake=${hydro.lake.toFixed(2)} wetland=${hydro.wetland.toFixed(2)} bank=${hydro.bank.toFixed(2)} width=${hydro.width.toFixed(1)} waterLevel=${hydro.waterLevel} flow=${hydro.flowX.toFixed(2)},${hydro.flowZ.toFixed(2)} current=${hydro.current.toFixed(2)} waterfall=${hydro.waterfallRisk.toFixed(2)}`;
+      case "flow":
+        return world.terrain.macro.hydrology.rivers.debugAt(x, z);
       case "roads": {
         const road = world.terrain.regions.roadSampleAt(x, z, height, biome, (wx, wz) => world.getSurfaceHeight(wx, wz));
         return `Road x=${x} z=${z} strength=${road.strength.toFixed(2)} dir=${road.dirX.toFixed(2)},${road.dirZ.toFixed(2)} waterCrossing=${Math.max(hydro.river, hydro.stream, hydro.lake).toFixed(2)} surfaceBiome=${biome}`;
@@ -874,7 +876,7 @@ export class CommandSystem {
         return `Forest debug x=${x} z=${z} biome=${biome} candidateSamples=${candidates} treeAnchors=${anchors} sampleGrid=8m radius=64m`;
       }
       default:
-        return "Usage: /world debug decorations|hydrology|roads|settlement|forest";
+        return "Usage: /world debug decorations|hydrology|flow|roads|settlement|forest";
     }
   }
 

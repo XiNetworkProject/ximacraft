@@ -25,13 +25,17 @@ export type HydrologySample = {
 
 export class HydrologyPlanner {
   private readonly watershed: WatershedMap;
-  private readonly rivers: RiverNetworkPlanner;
+  readonly rivers: RiverNetworkPlanner;
   private readonly lakes: LakePlanner;
   private readonly wetlands: WetlandPlanner;
 
-  constructor(private readonly noise: Noise) {
+  constructor(
+    private readonly noise: Noise,
+    /** Champ d'altitude de base réel (RegionalHeightField) pour l'écoulement. */
+    heightProvider: (x: number, z: number) => number,
+  ) {
     this.watershed = new WatershedMap(noise);
-    this.rivers = new RiverNetworkPlanner(noise);
+    this.rivers = new RiverNetworkPlanner(noise, heightProvider);
     this.lakes = new LakePlanner(noise);
     this.wetlands = new WetlandPlanner(noise);
   }
