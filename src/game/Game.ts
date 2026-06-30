@@ -653,7 +653,10 @@ export class Game {
     });
     world.environmentVisualState = environment.visual;
     this.refreshEnvironmentVisualsIfNeeded(environment, world);
-    this.fogBankRenderer.update(delta, this.environmentDirector, camera, this.qualityPreset);
+    this.fogBankRenderer.update(delta, this.environmentDirector, camera, this.menuSettings.fogQuality, {
+      environment,
+      getHeight: (x, z) => world.getSurfaceHeight(x, z),
+    });
     document.documentElement.dataset.environmentState = JSON.stringify({
       season: environment.season.season,
       temp: Number(environment.temperature.toFixed(1)),

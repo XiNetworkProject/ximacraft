@@ -31,6 +31,9 @@ import { FogBankSystem } from "../src/environment/FogBankSystem";
 import { dewPointC } from "../src/environment/EnvironmentDirector";
 import { SeasonState } from "../src/living/SeasonSystem";
 import { WeatherRadarHistory } from "../src/weather/map/WeatherRadarHistory";
+import { FogDensitySampler } from "../src/render/weather/fog/FogDensitySampler";
+import type { FogBankRenderSample } from "../src/environment/FogBankSystem";
+import { FogLodSystem } from "../src/render/weather/fog/FogLodSystem";
 
 let passed = 0;
 let failed = 0;
@@ -345,6 +348,37 @@ console.log("\n[environment] seasons, comfort, dew/frost and fog are coherent");
   }
   check("humid calm water/valley setup creates visible fog or mist", stateA.density > 0.15, `density=${stateA.density.toFixed(2)}`);
   check("fog bank sampling is deterministic for same seed/input", stateA.density.toFixed(3) === stateB.density.toFixed(3) && stateA.kind === stateB.kind, `a=${stateA.density.toFixed(3)} b=${stateB.density.toFixed(3)}`);
+}
+
+// ============================================================================
+console.log("\n[environment] volumetric fog layers respect terrain, sun and LOD");
+{
+  const sample: FogBankRenderSample = { id: "valley-test", x: 0, z: 0, radius: 220, density: 0.78, kind: "valley" };
+  const lod = new FogLodSystem();
+  const sampler = new FogDensitySampler();
+  const getHeight = (x: number, z: number) => Math.hypot(x, z) > 80 ? 94 : 55;
+  const baseContext = {
+    time: 12,
+    cameraX: -90,
+    cameraZ: 20,
+    windX: 3,
+    windZ: 0.8,
+    sunExposure: 0.08,
+    environment: null,
+    getHeight,
+  };
+  const near = lod.settingsFor(120, sample.density, "high");
+  const far = lod.settingsFor(1800, sample.density, "high");
+  const layers = sampler.layersFor(sample, near, baseContext);
+  const sunnyLayers = sampler.layersFor(sample, near, { ...baseContext, sunExposure: 0.9 });
+  const profile = sampler.heightProfileFor(sample, baseContext);
+  const opacity = layers.reduce((sum, l) => sum + l.opacity, 0);
+  const sunnyOpacity = sunnyLayers.reduce((sum, l) => sum + l.opacity, 0);
+  check("volumetric fog creates several stacked layers", layers.length >= 5, `layers=${layers.length}`);
+  check("valley fog stays under surrounding relief", profile.topY <= profile.reliefCeilingY + 0.01 && profile.topY < 94, `top=${profile.topY.toFixed(1)} relief=${profile.reliefCeilingY.toFixed(1)}`);
+  check("all fog layers remain inside the computed height field", layers.every((l) => l.y >= profile.baseY - 3 && l.y <= profile.topY + 3), `base=${profile.baseY.toFixed(1)} top=${profile.topY.toFixed(1)}`);
+  check("morning sun dissipates visible fog density", opacity > sunnyOpacity * 1.35, `fog=${opacity.toFixed(2)} sunny=${sunnyOpacity.toFixed(2)}`);
+  check("distant fog uses fewer layers than nearby fog", far.slices < near.slices, `near=${near.slices} far=${far.slices}`);
 }
 
 // ============================================================================
