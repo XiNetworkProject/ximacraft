@@ -55,8 +55,10 @@ export class WorldLoadingPage implements MenuPage {
 
   reset(name: string, seed: string): void {
     this.steps = DEFAULT_STEPS.map((step) => ({ ...step }));
+    this.element.classList.remove("failed");
     this.title.textContent = `Chargement de ${name}`;
     this.seed.textContent = `Seed ${seed}`;
+    this.tip.textContent = "Astuce : observe les nuages au loin, les fronts se deplacent vraiment.";
     this.setProgress("textures", 0);
   }
 

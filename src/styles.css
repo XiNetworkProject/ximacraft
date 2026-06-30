@@ -1190,6 +1190,10 @@ input {
   overflow: hidden !important;
 }
 
+.main-menu-shell.hidden {
+  display: none !important;
+}
+
 .menu-route-stack {
   position: relative;
   z-index: 1;

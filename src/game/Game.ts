@@ -437,13 +437,11 @@ export class Game {
   private enterWorldFromMenu(message: string): void {
     this.loading("enter", 1);
     this.mainMenu.completeLoading();
-    window.setTimeout(() => {
-      this.mainMenu.hide();
-      this.pauseMenu.hide();
-      this.started = true;
-      this.quickAccess.setVisible(true);
-      this.hud.message(message);
-    }, 240);
+    this.mainMenu.hide();
+    this.pauseMenu.hide();
+    this.started = true;
+    this.quickAccess.setVisible(true);
+    this.hud.message(message);
   }
 
   private async setupWorld(seed: string, saveData?: SaveData, newWorldOptions?: MainMenuNewWorldOptions): Promise<void> {

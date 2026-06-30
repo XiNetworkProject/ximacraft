@@ -153,11 +153,15 @@ export class MainMenuBackground {
   };
 
   private currentPalette(): { p: Palette } {
-    const cycle = (this.time / SCENE_SECONDS) % PALETTES.length;
-    const i = Math.floor(cycle);
+    const paletteCount = PALETTES.length;
+    if (paletteCount === 0) return { p: fallbackPalette() };
+    const rawCycle = this.time / SCENE_SECONDS;
+    const cycle = Number.isFinite(rawCycle) ? rawCycle % paletteCount : 0;
+    const i = positiveModulo(Math.floor(cycle), paletteCount);
     const t = smooth(cycle - i);
     const a = PALETTES[i];
-    const b = PALETTES[(i + 1) % PALETTES.length];
+    const b = PALETTES[(i + 1) % paletteCount];
+    if (!a || !b) return { p: a ?? b ?? fallbackPalette() };
     return { p: lerpPalette(a, b, t) };
   }
 
@@ -276,6 +280,24 @@ export class MainMenuBackground {
 
 function smooth(t: number): number {
   return t * t * (3 - 2 * t);
+}
+
+function positiveModulo(value: number, modulo: number): number {
+  return ((value % modulo) + modulo) % modulo;
+}
+
+function fallbackPalette(): Palette {
+  return {
+    skyTop: [10, 16, 38],
+    skyHorizon: [32, 44, 78],
+    sun: [196, 214, 255],
+    sunGlow: [120, 150, 220],
+    hills: [22, 28, 44],
+    cloud: [120, 132, 168],
+    particle: [200, 218, 255],
+    sunY: 0.24,
+    stars: 1,
+  };
 }
 
 function lerp(a: number, b: number, t: number): number {
