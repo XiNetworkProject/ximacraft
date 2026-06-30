@@ -308,18 +308,40 @@ function lerpTriple(a: [number, number, number], b: [number, number, number], t:
   return [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)];
 }
 
-function lerpPalette(a: Palette, b: Palette, t: number): Palette {
+function lerpPalette(a: Palette | undefined, b: Palette | undefined, t: number): Palette {
+  const safeA = completePalette(a);
+  const safeB = completePalette(b);
   return {
-    skyTop: lerpTriple(a.skyTop, b.skyTop, t),
-    skyHorizon: lerpTriple(a.skyHorizon, b.skyHorizon, t),
-    sun: lerpTriple(a.sun, b.sun, t),
-    sunGlow: lerpTriple(a.sunGlow, b.sunGlow, t),
-    hills: lerpTriple(a.hills, b.hills, t),
-    cloud: lerpTriple(a.cloud, b.cloud, t),
-    particle: lerpTriple(a.particle, b.particle, t),
-    sunY: lerp(a.sunY, b.sunY, t),
-    stars: lerp(a.stars, b.stars, t),
+    skyTop: lerpTriple(safeA.skyTop, safeB.skyTop, t),
+    skyHorizon: lerpTriple(safeA.skyHorizon, safeB.skyHorizon, t),
+    sun: lerpTriple(safeA.sun, safeB.sun, t),
+    sunGlow: lerpTriple(safeA.sunGlow, safeB.sunGlow, t),
+    hills: lerpTriple(safeA.hills, safeB.hills, t),
+    cloud: lerpTriple(safeA.cloud, safeB.cloud, t),
+    particle: lerpTriple(safeA.particle, safeB.particle, t),
+    sunY: lerp(safeA.sunY, safeB.sunY, t),
+    stars: lerp(safeA.stars, safeB.stars, t),
   };
+}
+
+function completePalette(palette: Palette | undefined): Palette {
+  const fallback = fallbackPalette();
+  return {
+    skyTop: validTriple(palette?.skyTop) ?? fallback.skyTop,
+    skyHorizon: validTriple(palette?.skyHorizon) ?? fallback.skyHorizon,
+    sun: validTriple(palette?.sun) ?? fallback.sun,
+    sunGlow: validTriple(palette?.sunGlow) ?? fallback.sunGlow,
+    hills: validTriple(palette?.hills) ?? fallback.hills,
+    cloud: validTriple(palette?.cloud) ?? fallback.cloud,
+    particle: validTriple(palette?.particle) ?? fallback.particle,
+    sunY: Number.isFinite(palette?.sunY) ? palette!.sunY : fallback.sunY,
+    stars: Number.isFinite(palette?.stars) ? palette!.stars : fallback.stars,
+  };
+}
+
+function validTriple(value: [number, number, number] | undefined): [number, number, number] | null {
+  if (!value || value.length !== 3 || !value.every(Number.isFinite)) return null;
+  return value;
 }
 
 function scaleColor(c: [number, number, number], s: number): [number, number, number] {

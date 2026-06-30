@@ -25,6 +25,13 @@ export type RegionColumnPlan = {
   blocksDecoration: boolean;
 };
 
+type RoadSample = {
+  strength: number;
+  dirX: number;
+  dirZ: number;
+  bridge: boolean;
+};
+
 export class RegionPlanner {
   private readonly settlementCellCache = new Map<string, SettlementPlan | null>();
   private readonly settlementAcceptanceCache = new Map<string, boolean>();
@@ -36,13 +43,12 @@ export class RegionPlanner {
     if (settlement) {
       return this.settlementColumn(settlement, x, z, height);
     }
-    const road = this.roadStrengthAt(x, z, height, biome, getHeight);
-    if (road > 0.78) {
+    const road = this.roadSampleAt(x, z, height, biome, getHeight);
+    if (road.strength > 0.78) {
       if (watercourse > 0.45) {
-        const blocks: RegionColumnBlock[] = [{ dy: 1, block: BlockId.OAK_SLAB }, { dy: 0, block: BlockId.WEATHERED_BEAM }];
-        return { surface: BlockId.GRAVEL, blocks, blocksDecoration: true };
+        return this.bridgeColumn(x, z, road);
       }
-      return { surface: road > 0.92 ? BlockId.GRAVEL_PATH : BlockId.DIRT_PATH, blocks: [], blocksDecoration: true };
+      return { surface: road.strength > 0.92 ? BlockId.GRAVEL_PATH : BlockId.DIRT_PATH, blocks: [], blocksDecoration: true };
     }
     return { blocks: [], blocksDecoration: false };
   }
@@ -68,11 +74,17 @@ export class RegionPlanner {
   }
 
   roadStrengthAt(x: number, z: number, height: number, biome: BiomeId, getHeight: (x: number, z: number) => number): number {
-    if (height <= SEA_LEVEL + 2 || isMountainBiome(biome) || biome === "lake" || biome === "mountain_lake") return 0;
+    return this.roadSampleAt(x, z, height, biome, getHeight).strength;
+  }
+
+  roadSampleAt(x: number, z: number, height: number, biome: BiomeId, getHeight: (x: number, z: number) => number): RoadSample {
+    if (height <= SEA_LEVEL + 2 || isMountainBiome(biome) || biome === "lake" || biome === "mountain_lake") {
+      return { strength: 0, dirX: 1, dirZ: 0, bridge: false };
+    }
     const cellSize = 1280;
     const cellX = Math.floor(x / cellSize);
     const cellZ = Math.floor(z / cellSize);
-    let best = 0;
+    let best: RoadSample = { strength: 0, dirX: 1, dirZ: 0, bridge: false };
     for (let dz = -1; dz <= 1; dz += 1) {
       for (let dx = -1; dx <= 1; dx += 1) {
         const a = this.planSettlementCell(cellX + dx, cellZ + dz, cellSize);
@@ -82,15 +94,37 @@ export class RegionPlanner {
           const b = this.planSettlementCell(cellX + dx + nx, cellZ + dz + nz, cellSize);
           if (!b) continue;
           const linkRoll = this.noise.random2D((cellX + dx) * 419 + nx * 17, (cellZ + dz) * 419 + nz * 29);
-          if (linkRoll > 0.55) continue;
-          const bend = this.noise.fbm2D(x * 0.002 + a.centerX * 0.001, z * 0.002 + b.centerZ * 0.001, 2) * 22;
-          const d = this.distanceToSegment(x + bend * 0.35, z - bend * 0.2, a.centerX, a.centerZ, b.centerX, b.centerZ);
-          const width = a.kind === "village" || b.kind === "village" ? 3.8 : 2.45;
-          if (d < width) best = Math.max(best, clamp(1 - d / width, 0, 1));
+          if (linkRoll > 0.72) continue;
+          const d = this.distanceToOrganicPath(x, z, a, b);
+          const width = a.kind === "village" || b.kind === "village" ? 4.7 : 3.15;
+          if (d.distance < width) {
+            const roadHeight = getHeight(Math.floor(x), Math.floor(z));
+            const localSlope = Math.max(
+              Math.abs(getHeight(Math.floor(x + d.dirZ * 5), Math.floor(z - d.dirX * 5)) - roadHeight),
+              Math.abs(getHeight(Math.floor(x - d.dirZ * 5), Math.floor(z + d.dirX * 5)) - roadHeight),
+            );
+            const slopePenalty = localSlope > 5 ? 0.44 : localSlope > 3 ? 0.74 : 1;
+            const strength = clamp(1 - d.distance / width, 0, 1) * slopePenalty;
+            if (strength > best.strength) best = { strength, dirX: d.dirX, dirZ: d.dirZ, bridge: false };
+          }
         }
       }
     }
     return best;
+  }
+
+  private bridgeColumn(x: number, z: number, road: RoadSample): RegionColumnPlan {
+    const alongX = Math.abs(road.dirX) >= Math.abs(road.dirZ);
+    const beam = alongX ? BlockId.WEATHERED_BEAM_X : BlockId.WEATHERED_BEAM_Z;
+    const perp = alongX ? z : x;
+    const edge = Math.abs(modCentered(perp, 7)) > 2.35;
+    const blocks: RegionColumnBlock[] = [
+      { dy: 0, block: beam },
+      { dy: 1, block: BlockId.OAK_SLAB },
+    ];
+    if (edge) blocks.push({ dy: 2, block: BlockId.OAK_FENCE });
+    if (Math.abs(modCentered(alongX ? x : z, 17)) < 0.6) blocks.unshift({ dy: -1, block: BlockId.WEATHERED_BEAM });
+    return { surface: BlockId.GRAVEL, blocks, blocksDecoration: true };
   }
 
   private planSettlementCell(cellX: number, cellZ: number, cellSize: number): SettlementPlan | null {
@@ -130,9 +164,8 @@ export class RegionPlanner {
     const dx = x - plan.centerX;
     const dz = z - plan.centerZ;
     const blocks: RegionColumnBlock[] = [];
-    const roadWidth = plan.kind === "village" ? 2 : 1;
-    const mainRoad = Math.abs(dx) <= roadWidth || Math.abs(dz) <= roadWidth;
-    if (mainRoad) {
+    const road = this.settlementRoadStrength(plan, dx, dz);
+    if (road > 0.73) {
       return { surface: plan.kind === "village" ? BlockId.GRAVEL_PATH : BlockId.DIRT_PATH, blocks, blocksDecoration: true };
     }
 
@@ -142,8 +175,7 @@ export class RegionPlanner {
       return { surface: BlockId.COBBLESTONE_PATH, blocks, blocksDecoration: true };
     }
 
-    const districtLane = Math.hypot(dx, dz) < plan.radius * 0.82
-      && (Math.abs(modCentered(dx, plan.kind === "village" ? 24 : 21)) <= 1 || Math.abs(modCentered(dz, plan.kind === "village" ? 24 : 21)) <= 1);
+    const districtLane = road > 0.54;
     if (districtLane) {
       return { surface: plan.kind === "village" ? BlockId.GRAVEL_PATH : BlockId.DIRT_PATH, blocks, blocksDecoration: true };
     }
@@ -192,6 +224,59 @@ export class RegionPlanner {
       return { cx: centerX, cz: centerZ, w, d };
     }
     return null;
+  }
+
+  private settlementRoadStrength(plan: SettlementPlan, dx: number, dz: number): number {
+    const dist = Math.hypot(dx, dz);
+    const radialCount = plan.kind === "village" ? 5 : 3;
+    const roadWidth = plan.kind === "village" ? 2.2 : 1.45;
+    let best = 0;
+    for (let i = 0; i < radialCount; i += 1) {
+      const angle = (i / radialCount) * Math.PI * 2 + this.noise.random2D(plan.centerX + i * 31, plan.centerZ - i * 29) * 0.48;
+      const px = Math.cos(angle);
+      const pz = Math.sin(angle);
+      const along = dx * px + dz * pz;
+      if (along < -plan.radius * 0.22 || along > plan.radius * 0.95) continue;
+      const side = Math.abs(dx * pz - dz * px);
+      best = Math.max(best, clamp(1 - side / roadWidth, 0, 1));
+    }
+    const ringA = Math.abs(dist - plan.radius * 0.34);
+    const ringB = Math.abs(dist - plan.radius * 0.58);
+    best = Math.max(best, clamp(1 - Math.min(ringA, ringB) / (roadWidth * 0.75), 0, 1) * (plan.kind === "village" ? 0.86 : 0.48));
+    return best;
+  }
+
+  private distanceToOrganicPath(px: number, pz: number, a: SettlementPlan, b: SettlementPlan): { distance: number; dirX: number; dirZ: number } {
+    const vx = b.centerX - a.centerX;
+    const vz = b.centerZ - a.centerZ;
+    const len = Math.hypot(vx, vz) || 1;
+    const nx = -vz / len;
+    const nz = vx / len;
+    const bendA = (this.noise.random2D(a.centerX * 0.13 + b.centerX, a.centerZ * 0.13 - b.centerZ) - 0.5) * 190;
+    const bendB = (this.noise.random2D(a.centerX * 0.17 - b.centerX, a.centerZ * 0.17 + b.centerZ) - 0.5) * 150;
+    let prevX = a.centerX;
+    let prevZ = a.centerZ;
+    let best = { distance: Number.POSITIVE_INFINITY, dirX: vx / len, dirZ: vz / len };
+    for (let i = 1; i <= 10; i += 1) {
+      const t = i / 10;
+      const omt = 1 - t;
+      const c1x = a.centerX + vx * 0.34 + nx * bendA;
+      const c1z = a.centerZ + vz * 0.34 + nz * bendA;
+      const c2x = a.centerX + vx * 0.68 + nx * bendB;
+      const c2z = a.centerZ + vz * 0.68 + nz * bendB;
+      const x = omt * omt * omt * a.centerX + 3 * omt * omt * t * c1x + 3 * omt * t * t * c2x + t * t * t * b.centerX;
+      const z = omt * omt * omt * a.centerZ + 3 * omt * omt * t * c1z + 3 * omt * t * t * c2z + t * t * t * b.centerZ;
+      const distance = this.distanceToSegment(px, pz, prevX, prevZ, x, z);
+      if (distance < best.distance) {
+        const sx = x - prevX;
+        const sz = z - prevZ;
+        const sl = Math.hypot(sx, sz) || 1;
+        best = { distance, dirX: sx / sl, dirZ: sz / sl };
+      }
+      prevX = x;
+      prevZ = z;
+    }
+    return best;
   }
 
   private distanceToSegment(px: number, pz: number, ax: number, az: number, bx: number, bz: number): number {

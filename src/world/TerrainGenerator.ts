@@ -114,11 +114,12 @@ export class TerrainGenerator {
 
         const treePlaced =
           height > SEA_LEVEL + 2 &&
+          !this.blocksNaturalStructure(x, z, height, hydro) &&
           (isForestBiome(biomeId) || biomeId === "plains" || biomeId === "bocage" || biomeId === "hills" || biomeId === "snow" || biomeId === "tundra") &&
           this.structures.shouldPlaceTree(x, z, biomeId, height);
         if (treePlaced) {
           this.structures.placeTree(chunk, lx, height, lz, biomeId);
-        } else if (height > SEA_LEVEL + 2 && this.structures.shouldPlaceFallenLog(x, z, biomeId)) {
+        } else if (height > SEA_LEVEL + 2 && !this.blocksNaturalStructure(x, z, height, hydro) && this.structures.shouldPlaceFallenLog(x, z, biomeId)) {
           this.structures.placeFallenLog(chunk, lx, height, lz, biomeId);
         } else {
           this.living.decorateColumn(chunk, lx, height, lz, biomeId);
@@ -164,6 +165,18 @@ export class TerrainGenerator {
       return this.noise.fbm2D(x * 0.06, z * 0.06, 2) > 0.18 ? BlockId.STONE : BlockId.GRASS;
     }
     return BlockId.GRASS;
+  }
+
+  private blocksNaturalStructure(x: number, z: number, height: number, hydro = this.macro.sample(x, z).hydrology): boolean {
+    const activeWater = Math.max(hydro.river, hydro.stream * 0.86, hydro.lake, hydro.wetland * 0.72);
+    if (activeWater > 0.34 || hydro.bank > 0.72 || height <= hydro.waterLevel + 1) return true;
+    const slope = Math.max(
+      Math.abs(this.getHeight(x + 1, z) - height),
+      Math.abs(this.getHeight(x - 1, z) - height),
+      Math.abs(this.getHeight(x, z + 1) - height),
+      Math.abs(this.getHeight(x, z - 1) - height),
+    );
+    return slope > 4;
   }
 
   private subsurfaceBlock(height: number, biome: string): BlockId {

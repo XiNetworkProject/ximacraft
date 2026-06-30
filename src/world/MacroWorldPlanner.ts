@@ -48,9 +48,12 @@ export class MacroWorldPlanner {
       - Math.max(0, erosion - 0.5) * 18;
     const preliminary = Math.floor(clamp(roughHeight, 18, WORLD_HEIGHT - 14));
     const hydrology = this.hydrology.sample(x, z, preliminary);
-    const riverCut = hydrology.river * (14 + Math.max(0, continentality - 0.45) * 22) + hydrology.stream * 4;
-    const floodLift = hydrology.floodplain * hydrology.floodplain * 3.5;
-    const altitude = Math.floor(clamp(roughHeight - riverCut + floodLift, 18, WORLD_HEIGHT - 14));
+    const channelWidth = Math.max(1, hydrology.width);
+    const riverCut = hydrology.river * (8 + channelWidth * 1.15 + Math.max(0, continentality - 0.45) * 16) + hydrology.stream * (2.5 + channelWidth * 0.18);
+    const floodLift = hydrology.floodplain * hydrology.floodplain * (1.5 + hydrology.width * 0.18);
+    const lakeCut = hydrology.lake * clamp(preliminary - SEA_LEVEL + 5, 0, 12) * 0.62;
+    const bankTerrace = hydrology.bank * (1 - Math.max(hydrology.river, hydrology.lake)) * 1.8;
+    const altitude = Math.floor(clamp(roughHeight - riverCut - lakeCut + floodLift - bankTerrace, 18, WORLD_HEIGHT - 14));
     const sample = { altitude, continentality, humidity, temperature, erosion, terrainAge, mountainMask, hydrology: this.hydrology.sample(x, z, altitude) };
     this.sampleCache.set(key, sample);
     return sample;

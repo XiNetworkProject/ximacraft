@@ -82,6 +82,12 @@ export class BiomeGenerator {
       waterLevel: SEA_LEVEL,
       bank: 0,
       waterfallRisk: 0,
+      width: 0,
+      flowX: 0,
+      flowZ: 0,
+      current: 0,
+      source: 0,
+      category: roughHeight <= SEA_LEVEL - 4 ? "lake" as const : "dry" as const,
     };
     const macro = this.macroBiomes.resolve(climate, roughHeight, hydro);
     const id = this.local.refine(macro.id, climate, hydro);

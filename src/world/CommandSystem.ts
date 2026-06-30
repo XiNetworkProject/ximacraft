@@ -149,10 +149,12 @@ export const COMMANDS: CommandDefinition[] = [
   { usage: "/world regen loaded", prefix: "/world regen loaded", description: "Regenerate loaded terrain chunks with the current generator." },
   { usage: "/world cleanup generated-tracks", prefix: "/world cleanup generated-tracks", description: "Remove legacy generated track blocks from loaded chunks and saves." },
   { usage: "/world regenerate-decoration", prefix: "/world regenerate-decoration", description: "Clean legacy tracks and regenerate loaded chunk decoration." },
-  { usage: "/world debug decorations", prefix: "/world debug decorations", description: "Inspect plants, legacy tracks and natural decorations in loaded chunks." },
+  { usage: "/world regenerate decoration", prefix: "/world regenerate decoration", description: "Alias for decoration cleanup/regeneration." },
+  { usage: "/world regenerate terrain-preview", prefix: "/world regenerate terrain-preview", description: "Preview local macro terrain, hydrology and biome without changing saves." },
+  { usage: "/world debug decorations|hydrology|roads|settlement|forest", prefix: "/world debug ", description: "Inspect terrain planners at the player." },
   { usage: "/world biome debug", prefix: "/world biome debug", description: "Inspect macro climate, local biome and micro-biome at the player." },
   { usage: "/world biome map", prefix: "/world biome map", description: "Print a compact biome map around the player." },
-  { usage: "/world biome locate forest|village|river|mountain", prefix: "/world biome locate", description: "Locate the nearest broad biome/feature from the real generator." },
+  { usage: "/world biome locate forest|village|river|lake|bridge|structure|mountain", prefix: "/world biome locate", description: "Locate the nearest broad biome/feature from the real generator." },
   { usage: "/world biome regenerate", prefix: "/world biome regenerate", description: "Regenerate loaded chunks with the current climate/biome decorators." },
   { usage: "/build debug palette", prefix: "/build debug palette", description: "Place a compact palette of new non-cube block shapes." },
   { usage: "/build debug stairs", prefix: "/build debug stairs", description: "Place oriented stair variants." },
@@ -654,17 +656,21 @@ export class CommandSystem {
       this.write(`Removed ${removed} legacy generated track block(s) from loaded chunks.`);
       return;
     }
-    if (parts[1] === "regenerate-decoration") {
+    if (parts[1] === "regenerate-decoration" || (parts[1] === "regenerate" && parts[2] === "decoration")) {
       const removed = this.context!.worldMemory?.cleanupGeneratedTrackBlocks(this.context!.world) ?? this.cleanupLegacyTracksFallback();
       const regenerated = this.context!.world.regenerateLoadedChunks();
       this.write(`Cleaned ${removed} legacy track block(s), regenerated ${regenerated} loaded chunk(s).`);
       return;
     }
-    if (parts[1] === "debug" && parts[2] === "decorations") {
-      this.write(this.debugDecorationSummary());
+    if (parts[1] === "regenerate" && parts[2] === "terrain-preview") {
+      this.write(this.worldTerrainPreview());
       return;
     }
-    this.write("Usage: /world regen loaded | /world biome debug|map|locate|regenerate | /world cleanup generated-tracks | /world regenerate-decoration | /world debug decorations");
+    if (parts[1] === "debug") {
+      this.write(this.worldDebug(parts[2] ?? "decorations"));
+      return;
+    }
+    this.write("Usage: /world regen loaded | /world biome debug|map|locate|regenerate | /world cleanup generated-tracks | /world regenerate-decoration | /world regenerate decoration|terrain-preview | /world debug decorations|hydrology|roads|settlement|forest");
   }
 
   private executeWorldBiome(parts: string[]): void {
@@ -692,7 +698,7 @@ export class CommandSystem {
       this.write(`Regenerated ${count} loaded chunk(s) using the current climate/biome planners.`);
       return;
     }
-    this.write("Usage: /world biome debug|map|locate forest|village|river|mountain|regenerate");
+    this.write("Usage: /world biome debug|map|locate forest|village|river|lake|bridge|structure|mountain|regenerate");
   }
 
   private biomeMap(centerX: number, centerZ: number): string {
@@ -722,7 +728,7 @@ export class CommandSystem {
   private locateBiomeFeature(centerX: number, centerZ: number, target: string): string {
     const world = this.context!.world;
     const maxRadius = 4096;
-    const step = 64;
+    const step = target === "structure" || target === "bridge" ? 32 : 64;
     let best: { x: number; z: number; distance: number; label: string } | null = null;
     for (let radius = step; radius <= maxRadius; radius += step) {
       for (let z = centerZ - radius; z <= centerZ + radius; z += step) {
@@ -732,14 +738,19 @@ export class CommandSystem {
           const macro = world.terrain.macro.sample(x, z);
           const biome = world.terrain.biomes.sample(x, z, height, macro.hydrology).id;
           const settlement = world.terrain.regions.settlementAt(x, z, height, biome, (wx, wz) => world.getSurfaceHeight(wx, wz));
+          const road = world.terrain.regions.roadSampleAt(x, z, height, biome, (wx, wz) => world.getSurfaceHeight(wx, wz));
+          const poi = height > 0 ? world.terrain.living.poiAt(x, z, biome, height) : null;
           const matches =
             (target === "forest" && isForestBiome(biome)) ||
             (target === "mountain" && isMountainBiome(biome)) ||
             (target === "river" && Math.max(macro.hydrology.river, macro.hydrology.stream) > 0.58) ||
+            (target === "lake" && macro.hydrology.lake > 0.55) ||
+            (target === "bridge" && road.strength > 0.78 && Math.max(macro.hydrology.river, macro.hydrology.stream, macro.hydrology.lake) > 0.45) ||
+            (target === "structure" && poi !== null) ||
             (target === "village" && settlement?.kind === "village");
           if (!matches) continue;
           const distance = Math.hypot(x - centerX, z - centerZ);
-          best = { x, z, distance, label: target === "village" && settlement ? settlement.kind : biome };
+          best = { x, z, distance, label: target === "village" && settlement ? settlement.kind : target === "structure" && poi ? poi : biome };
           break;
         }
         if (best) break;
@@ -749,6 +760,73 @@ export class CommandSystem {
     return best
       ? `${target} found at x=${best.x} z=${best.z} distance=${best.distance.toFixed(0)} label=${best.label}`
       : `${target} not found within ${maxRadius} blocks.`;
+  }
+
+  private worldTerrainPreview(): string {
+    const world = this.context!.world;
+    const player = this.context!.player.position;
+    const centerX = Math.floor(player.x);
+    const centerZ = Math.floor(player.z);
+    const step = 128;
+    const rows: string[] = [];
+    for (let gz = -3; gz <= 3; gz += 1) {
+      let row = "";
+      for (let gx = -3; gx <= 3; gx += 1) {
+        const x = centerX + gx * step;
+        const z = centerZ + gz * step;
+        const macro = world.terrain.macro.sample(x, z);
+        const biome = world.terrain.biomes.sample(x, z, macro.altitude, macro.hydrology).id;
+        const hydro = macro.hydrology;
+        const glyph = hydro.lake > 0.55 ? "L" : hydro.river > 0.5 ? "R" : hydro.stream > 0.58 ? "s" : hydro.wetland > 0.5 ? "w" : biomeGlyph(biome);
+        row += gx === 0 && gz === 0 ? "@" : glyph;
+      }
+      rows.push(row);
+    }
+    return `Terrain preview step=${step}m center=${centerX},${centerZ}\n${rows.join("\n")}\nR=river s=stream L=lake w=wetland @=player`;
+  }
+
+  private worldDebug(kind: string): string {
+    const world = this.context!.world;
+    const player = this.context!.player.position;
+    const x = Math.floor(player.x);
+    const z = Math.floor(player.z);
+    const height = world.getSurfaceHeight(x, z);
+    const macro = world.terrain.macro.sample(x, z);
+    const hydro = macro.hydrology;
+    const biome = world.terrain.biomes.sample(x, z, height, hydro).id;
+    switch (kind) {
+      case "decorations":
+        return this.debugDecorationSummary();
+      case "hydrology":
+        return `Hydrology x=${x} z=${z} y=${height} category=${hydro.category} river=${hydro.river.toFixed(2)} stream=${hydro.stream.toFixed(2)} lake=${hydro.lake.toFixed(2)} wetland=${hydro.wetland.toFixed(2)} bank=${hydro.bank.toFixed(2)} width=${hydro.width.toFixed(1)} waterLevel=${hydro.waterLevel} flow=${hydro.flowX.toFixed(2)},${hydro.flowZ.toFixed(2)} current=${hydro.current.toFixed(2)} waterfall=${hydro.waterfallRisk.toFixed(2)}`;
+      case "roads": {
+        const road = world.terrain.regions.roadSampleAt(x, z, height, biome, (wx, wz) => world.getSurfaceHeight(wx, wz));
+        return `Road x=${x} z=${z} strength=${road.strength.toFixed(2)} dir=${road.dirX.toFixed(2)},${road.dirZ.toFixed(2)} waterCrossing=${Math.max(hydro.river, hydro.stream, hydro.lake).toFixed(2)} surfaceBiome=${biome}`;
+      }
+      case "settlement": {
+        const settlement = world.terrain.regions.settlementAt(x, z, height, biome, (wx, wz) => world.getSurfaceHeight(wx, wz));
+        return settlement
+          ? `Settlement id=${settlement.id} kind=${settlement.kind} center=${settlement.centerX},${settlement.centerZ} radius=${settlement.radius} distance=${Math.hypot(x - settlement.centerX, z - settlement.centerZ).toFixed(1)}`
+          : `No settlement at x=${x} z=${z}. Try /world biome locate village.`;
+      }
+      case "forest": {
+        let candidates = 0;
+        let anchors = 0;
+        for (let dz = -64; dz <= 64; dz += 8) {
+          for (let dx = -64; dx <= 64; dx += 8) {
+            const sx = x + dx;
+            const sz = z + dz;
+            const sy = world.getSurfaceHeight(sx, sz);
+            const sampleBiome = world.terrain.biomes.sample(sx, sz, sy, world.terrain.macro.sample(sx, sz).hydrology).id;
+            if (isForestBiome(sampleBiome) || sampleBiome === "bocage" || sampleBiome === "plains" || sampleBiome === "hills") candidates += 1;
+            if (world.terrain.structures.shouldPlaceTree(sx, sz, sampleBiome, sy)) anchors += 1;
+          }
+        }
+        return `Forest debug x=${x} z=${z} biome=${biome} candidateSamples=${candidates} treeAnchors=${anchors} sampleGrid=8m radius=64m`;
+      }
+      default:
+        return "Usage: /world debug decorations|hydrology|roads|settlement|forest";
+    }
   }
 
   private executeBuild(parts: string[]): void {

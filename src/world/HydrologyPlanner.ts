@@ -15,6 +15,12 @@ export type HydrologySample = {
   waterLevel: number;
   bank: number;
   waterfallRisk: number;
+  width: number;
+  flowX: number;
+  flowZ: number;
+  current: number;
+  source: number;
+  category: "dry" | "source" | "stream" | "river" | "great_river" | "lake" | "wetland";
 };
 
 export class HydrologyPlanner {
@@ -41,8 +47,32 @@ export class HydrologyPlanner {
     const wetland = wetlands.wetland;
     const floodplain = wetlands.floodplain;
     const bank = clamp(Math.max(riverNetwork.bank, lake * 0.7), 0, 1);
-    const waterLevel = lakePlan.waterLevel;
+    const channelWaterLevel = river > 0.38 || stream > 0.68 ? height + (river > 0.72 ? 2 : 1) : 0;
+    const waterLevel = Math.max(lakePlan.waterLevel, channelWaterLevel);
     const waterfallRisk = riverNetwork.waterfallRisk;
-    return { river, stream, floodplain, wetland, lake, waterLevel, bank, waterfallRisk };
+    const category =
+      lake > 0.55 ? "lake" :
+        wetland > 0.55 ? "wetland" :
+          river > 0.68 && riverNetwork.width > 10 ? "great_river" :
+            river > 0.46 ? "river" :
+              stream > 0.5 ? "stream" :
+                riverNetwork.source > 0.42 ? "source" :
+                  "dry";
+    return {
+      river,
+      stream,
+      floodplain,
+      wetland,
+      lake,
+      waterLevel,
+      bank,
+      waterfallRisk,
+      width: riverNetwork.width,
+      flowX: riverNetwork.flowX,
+      flowZ: riverNetwork.flowZ,
+      current: riverNetwork.current,
+      source: riverNetwork.source,
+      category,
+    };
   }
 }
