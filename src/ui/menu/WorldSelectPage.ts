@@ -9,6 +9,7 @@ export class WorldSelectPage implements MenuPage {
   private readonly list = document.createElement("div");
   private readonly search = document.createElement("input");
   private readonly sort = document.createElement("select");
+  private readonly modal = document.createElement("div");
   private worlds: WorldSummary[] = [];
 
   constructor(
@@ -47,7 +48,8 @@ export class WorldSelectPage implements MenuPage {
     this.sort.addEventListener("change", () => this.render());
     toolbar.append(this.search, this.sort, button("Creer un monde", callbacks.createWorld, "", true), button("Actualiser", callbacks.refresh, "secondary"));
     this.list.className = "world-card-grid";
-    this.element.append(header, toolbar, this.list);
+    this.modal.className = "world-action-modal hidden";
+    this.element.append(header, toolbar, this.list, this.modal);
   }
 
   setWorlds(worlds: WorldSummary[]): void {
@@ -113,49 +115,148 @@ export class WorldSelectPage implements MenuPage {
   }
 
   private moreButton(world: WorldSummary): HTMLButtonElement {
-    const menu = button("...", () => {
-      const action = window.prompt(
-        `Action pour "${world.name}"\nrenommer | dupliquer | supprimer | seed`,
-        "renommer",
-      )?.trim().toLowerCase();
-      if (!action) return;
-      if (action === "renommer") {
-        const name = window.prompt("Nouveau nom du monde", world.name);
-        if (name?.trim()) this.callbacks.rename(world.id, name);
-        return;
-      }
-      if (action === "dupliquer") {
-        this.callbacks.duplicate(world.id);
-        return;
-      }
-      if (action === "supprimer") {
-        if (window.confirm(`Supprimer definitivement "${world.name}" ? Cette action est irreversible.`)) {
-          this.callbacks.delete(world.id);
-        }
-        return;
-      }
-      if (action === "seed") {
-        void navigator.clipboard?.writeText(world.seed);
-        window.alert(`Seed: ${world.seed}`);
-      }
-    }, "secondary");
+    const menu = button("...", () => this.openActions(world), "secondary");
     menu.ariaLabel = `Actions pour ${world.name}`;
     return menu;
+  }
+
+  private openActions(world: WorldSummary): void {
+    this.modal.textContent = "";
+    this.modal.classList.remove("hidden");
+    const panel = document.createElement("div");
+    panel.className = "world-action-panel";
+    const title = document.createElement("h3");
+    title.textContent = world.name;
+    const seed = document.createElement("p");
+    seed.textContent = `Seed ${world.seed}`;
+    const nameInput = document.createElement("input");
+    nameInput.value = world.name;
+    nameInput.maxLength = 48;
+    const status = document.createElement("span");
+    status.className = "world-action-status";
+    const actions = document.createElement("div");
+    actions.className = "world-action-buttons";
+    actions.append(
+      button("Renommer", () => {
+        if (nameInput.value.trim()) {
+          this.callbacks.rename(world.id, nameInput.value.trim());
+          this.closeActions();
+        }
+      }, "", true),
+      button("Dupliquer", () => {
+        this.callbacks.duplicate(world.id);
+        this.closeActions();
+      }, "secondary"),
+      button("Copier seed", () => {
+        void navigator.clipboard?.writeText(world.seed);
+        status.textContent = "Seed copiee";
+      }, "secondary"),
+      button("Supprimer", () => this.openDeleteConfirm(world), "danger"),
+      button("Fermer", () => this.closeActions(), "secondary"),
+    );
+    panel.append(title, seed, nameInput, actions, status);
+    this.modal.appendChild(panel);
+  }
+
+  private openDeleteConfirm(world: WorldSummary): void {
+    this.modal.textContent = "";
+    const panel = document.createElement("div");
+    panel.className = "world-action-panel danger";
+    const title = document.createElement("h3");
+    title.textContent = `Supprimer ${world.name} ?`;
+    const text = document.createElement("p");
+    text.textContent = "Cette sauvegarde sera retiree de l'index et du stockage local.";
+    const actions = document.createElement("div");
+    actions.className = "world-action-buttons";
+    actions.append(
+      button("Annuler", () => this.openActions(world), "secondary"),
+      button("Supprimer definitivement", () => {
+        this.callbacks.delete(world.id);
+        this.closeActions();
+      }, "danger", true),
+    );
+    panel.append(title, text, actions);
+    this.modal.appendChild(panel);
+  }
+
+  private closeActions(): void {
+    this.modal.classList.add("hidden");
+    this.modal.textContent = "";
   }
 }
 
 function createWorldPreview(world: WorldSummary): HTMLElement {
   const preview = document.createElement("div");
   preview.className = "world-preview";
-  const hash = parseInt((world.thumbnailKey ?? world.seed).slice(0, 8), 16) || 1;
-  const hue = hash % 360;
-  const hue2 = (hue + 42 + (hash % 80)) % 360;
-  preview.style.setProperty("--preview-a", `hsl(${hue} 58% 34%)`);
-  preview.style.setProperty("--preview-b", `hsl(${hue2} 62% 48%)`);
-  preview.style.setProperty("--preview-sun", `hsl(${(hue + 130) % 360} 90% 78%)`);
-  preview.appendChild(document.createElement("i"));
-  preview.appendChild(document.createElement("b"));
+  const canvas = document.createElement("canvas");
+  canvas.width = 260;
+  canvas.height = 132;
+  drawWorldPreview(canvas, world);
+  preview.appendChild(canvas);
   return preview;
+}
+
+function drawWorldPreview(canvas: HTMLCanvasElement, world: WorldSummary): void {
+  const ctx = canvas.getContext("2d")!;
+  const hash = hashText(`${world.seed}:${world.thumbnailKey ?? ""}`);
+  const sky = ctx.createLinearGradient(0, 0, 0, canvas.height);
+  const season = world.season ?? "spring";
+  sky.addColorStop(0, season === "winter" ? "#9dc4e8" : season === "autumn" ? "#f2b27a" : "#6fb7ec");
+  sky.addColorStop(1, season === "winter" ? "#dce8ee" : "#c7e8ff");
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "rgba(255,239,178,0.86)";
+  ctx.beginPath();
+  ctx.arc(42 + (hash % 130), 30 + ((hash >> 4) % 18), 12, 0, Math.PI * 2);
+  ctx.fill();
+
+  const ridgeCount = 3;
+  for (let layer = 0; layer < ridgeCount; layer += 1) {
+    const yBase = 70 + layer * 17;
+    ctx.beginPath();
+    ctx.moveTo(0, canvas.height);
+    for (let x = 0; x <= canvas.width; x += 16) {
+      const n = Math.sin((x + hash * (layer + 1)) * 0.035) * 8 + Math.sin((x - hash) * 0.071) * 5;
+      ctx.lineTo(x, yBase + n);
+    }
+    ctx.lineTo(canvas.width, canvas.height);
+    ctx.closePath();
+    const forest = world.worldOptions?.worldQuality === "wild";
+    const colors = season === "winter"
+      ? ["#d9e3df", "#b8c9c2", "#8fa59b"]
+      : season === "autumn"
+        ? ["#9a6e3e", "#6f7b44", "#385b3f"]
+        : forest
+          ? ["#547d4a", "#315f42", "#244b34"]
+          : ["#7aa55b", "#5e8a4d", "#3f6e45"];
+    ctx.fillStyle = colors[layer];
+    ctx.fill();
+  }
+
+  if ((hash & 3) !== 0) {
+    ctx.strokeStyle = "rgba(56,133,174,0.82)";
+    ctx.lineWidth = 7;
+    ctx.beginPath();
+    ctx.moveTo((hash % 70) + 12, canvas.height);
+    ctx.bezierCurveTo(90, 106, 120, 96, 146 + (hash % 38), 78);
+    ctx.stroke();
+  }
+  if ((hash & 7) < 4) {
+    ctx.fillStyle = "rgba(244,205,104,0.9)";
+    ctx.fillRect(176, 82, 18, 10);
+    ctx.fillRect(192, 76, 22, 16);
+    ctx.fillStyle = "rgba(70,43,28,0.8)";
+    ctx.fillRect(179, 92, 38, 4);
+  }
+}
+
+function hashText(value: string): number {
+  let hash = 2166136261;
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
 }
 
 function datum(label: string, value: string): HTMLElement {

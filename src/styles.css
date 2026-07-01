@@ -1064,6 +1064,199 @@ input {
   vertical-align: middle;
 }
 
+.world-map-journal {
+  position: fixed;
+  inset: 28px;
+  z-index: 24;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 14px;
+  background: linear-gradient(160deg, rgba(12, 18, 27, 0.96), rgba(5, 9, 15, 0.98));
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.62), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  padding: 18px;
+  pointer-events: auto;
+  backdrop-filter: blur(18px);
+}
+
+.world-map-journal header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.world-map-journal header span {
+  color: #9fb0c2;
+  font-size: 12px;
+  text-transform: uppercase;
+  font-weight: 800;
+}
+
+.world-map-journal h2 {
+  margin: 0;
+}
+
+.world-map-tabs {
+  display: flex;
+  gap: 8px;
+}
+
+.world-map-tabs button {
+  min-height: 34px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 7px;
+  background: rgba(15, 23, 42, 0.84);
+  color: #e2e8f0;
+  cursor: pointer;
+  padding: 0 12px;
+  font-weight: 800;
+}
+
+.world-map-journal[data-tab="map"] .world-map-tabs button[data-tab-target="map"],
+.world-map-journal[data-tab="journal"] .world-map-tabs button[data-tab-target="journal"] {
+  background: #8ddfca;
+  color: #04111a;
+}
+
+.world-map-journal main {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.65fr);
+  gap: 14px;
+}
+
+.world-map-journal[data-tab="map"] .world-journal-panel,
+.world-map-journal[data-tab="journal"] .world-map-canvas-wrap {
+  display: none;
+}
+
+.world-map-journal[data-tab="journal"] main {
+  grid-template-columns: minmax(320px, 780px);
+}
+
+.world-map-canvas-wrap,
+.world-journal-panel {
+  min-height: 0;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  background: rgba(5, 10, 18, 0.44);
+  overflow: hidden;
+}
+
+.world-map-canvas-wrap canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.world-journal-panel {
+  padding: 14px;
+  overflow: auto;
+}
+
+.journal-current {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  border-radius: 9px;
+  background: rgba(141, 223, 202, 0.12);
+  color: #e7fff8;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+
+.journal-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 10px;
+}
+
+.journal-card {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 9px;
+  background: rgba(15, 23, 42, 0.64);
+  padding: 12px;
+}
+
+.journal-card h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: #a8b7c7;
+}
+
+.journal-card strong {
+  display: block;
+  font-size: 26px;
+  margin-bottom: 8px;
+}
+
+.journal-card p {
+  margin: 0;
+  color: #c8d4df;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.world-preview canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.world-action-modal {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.48);
+  backdrop-filter: blur(10px);
+}
+
+.world-action-panel {
+  width: min(430px, calc(100% - 30px));
+  display: grid;
+  gap: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  background: linear-gradient(160deg, rgba(20, 28, 38, 0.98), rgba(8, 12, 18, 0.98));
+  padding: 18px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55);
+}
+
+.world-action-panel h3,
+.world-action-panel p {
+  margin: 0;
+}
+
+.world-action-panel input {
+  min-height: 40px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  background: rgba(5, 10, 18, 0.75);
+  color: #f8fafc;
+  padding: 0 12px;
+}
+
+.world-action-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.world-action-status {
+  min-height: 18px;
+  color: #8ddfca;
+  font-size: 12px;
+}
+
+.ui-button.danger {
+  background: linear-gradient(180deg, #ef4444, #991b1b);
+  color: #fff;
+}
+
 .command-console {
   position: fixed;
   left: 12px;

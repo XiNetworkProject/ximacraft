@@ -13,14 +13,35 @@ export interface SurfaceTrace {
   strength: number;
 }
 
+export interface WorldMemorySnapshot {
+  ageSeconds: number;
+  biomes: string[];
+  weather: string[];
+  structures: string[];
+  traceCount: number;
+  maxAltitude: number;
+  distanceTravelled: number;
+  lastBiome?: string;
+  lastWeather?: string;
+}
+
 export class WorldMemorySystem {
   private timer = 0;
   private cursor = 0;
   private age = 0;
   private readonly traces: SurfaceTrace[] = [];
+  private readonly seenBiomes = new Set<string>();
+  private readonly seenWeather = new Set<string>();
+  private readonly seenStructures = new Set<string>();
+  private maxAltitude = 0;
+  private distanceTravelled = 0;
+  private lastPlayer: { x: number; z: number } | null = null;
+  private lastBiome = "";
+  private lastWeather = "";
 
   update(delta: number, world: World, surface: SurfaceWeatherState, player: { x: number; z: number }, sample: WeatherSample): void {
     this.age += delta;
+    this.updateExploration(world, player, sample);
     this.pruneTraces(sample);
     this.timer -= delta;
     if (this.timer > 0) return;
@@ -56,6 +77,20 @@ export class WorldMemorySystem {
     return this.traces;
   }
 
+  snapshot(): WorldMemorySnapshot {
+    return {
+      ageSeconds: this.age,
+      biomes: [...this.seenBiomes].sort(),
+      weather: [...this.seenWeather].sort(),
+      structures: [...this.seenStructures].sort(),
+      traceCount: this.traces.length,
+      maxAltitude: this.maxAltitude,
+      distanceTravelled: this.distanceTravelled,
+      lastBiome: this.lastBiome || undefined,
+      lastWeather: this.lastWeather || undefined,
+    };
+  }
+
   cleanupGeneratedTrackBlocks(world: World): number {
     let removed = 0;
     for (const chunk of world.chunks.values()) {
@@ -78,6 +113,36 @@ export class WorldMemorySystem {
     }
     this.traces.length = 0;
     return removed;
+  }
+
+  private updateExploration(world: World, player: { x: number; z: number }, sample: WeatherSample): void {
+    if (this.lastPlayer) {
+      const step = Math.hypot(player.x - this.lastPlayer.x, player.z - this.lastPlayer.z);
+      if (step < 80) this.distanceTravelled += step;
+    }
+    this.lastPlayer = { x: player.x, z: player.z };
+    const x = Math.floor(player.x);
+    const z = Math.floor(player.z);
+    const height = world.getSurfaceHeight(x, z);
+    const biome = world.getBiomeAt(x, z).id;
+    this.lastBiome = biome;
+    this.lastWeather = sample.weatherType;
+    this.maxAltitude = Math.max(this.maxAltitude, height);
+    this.seenBiomes.add(biome);
+    this.seenWeather.add(sample.weatherType);
+
+    const settlement = world.terrain.regions.settlementAt(x, z, height, biome, (wx, wz) => world.getSurfaceHeight(wx, wz));
+    if (settlement) this.seenStructures.add(settlement.kind === "village" ? "village" : "hameau");
+    for (let dz = -48; dz <= 48; dz += 24) {
+      for (let dx = -48; dx <= 48; dx += 24) {
+        const sx = x + dx;
+        const sz = z + dz;
+        const sy = world.getSurfaceHeight(sx, sz);
+        const sampleBiome = world.getBiomeAt(sx, sz).id;
+        const poi = world.terrain.living.poiAt(sx, sz, sampleBiome, sy);
+        if (poi) this.seenStructures.add(poi);
+      }
+    }
   }
 
   private shouldLeaveTracks(base: BlockId, above: BlockId, wetness: number, sample: WeatherSample): boolean {

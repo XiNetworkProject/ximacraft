@@ -60,6 +60,7 @@ import { EnvironmentDirector } from "../environment/EnvironmentDirector";
 import type { EnvironmentState } from "../environment/EnvironmentState";
 import { SpatialAudioMixer } from "../assets/SpatialAudioMixer";
 import { WeatherMapUI } from "../ui/weather/WeatherMapUI";
+import { buildWorldMapData, WorldMapJournalUI } from "../ui/WorldMapJournalUI";
 import { DebugOverlay } from "../ui/DebugOverlay";
 import { HotbarUI } from "../ui/HotbarUI";
 import { HUD } from "../ui/HUD";
@@ -169,6 +170,7 @@ export class Game {
   private readonly debug: DebugOverlay;
   private readonly command: CommandSystem;
   private readonly weatherMapUI: WeatherMapUI;
+  private readonly worldMapJournalUI: WorldMapJournalUI;
   private readonly outline: THREE.LineSegments;
 
   private world: World | null = null;
@@ -255,6 +257,18 @@ export class Game {
       (center) => this.forecastSystem.forecastTimeline(center?.x, center?.z),
       () => this.alertSystem.list(),
     );
+    this.worldMapJournalUI = new WorldMapJournalUI(this.overlay, (center, radius) => {
+      if (!this.world) return null;
+      const cellSize = Math.max(24, Math.round(radius / 68));
+      return buildWorldMapData(
+        this.world,
+        { x: this.player.position.x, z: this.player.position.z },
+        radius,
+        cellSize,
+        this.worldMemory.snapshot(),
+        center ?? { x: this.player.position.x, z: this.player.position.z },
+      );
+    });
     this.mainMenu = new MainMenu(this.overlay, {
       newGame: (options) => void this.startNewGame(options),
       loadWorld: (worldId) => void this.loadGame(worldId),
@@ -274,6 +288,7 @@ export class Game {
       resume: () => this.resume(),
       save: () => void this.saveGame(),
       openMap: () => this.openWeatherMap(),
+      openWorldMap: () => this.openWorldMap("map"),
       openInventory: () => this.openInventory(),
       openCommands: () => this.command.openCommandTable(),
       openWorlds: () => this.openWorldsFromPause(),
@@ -282,6 +297,8 @@ export class Game {
     });
     this.quickAccess = new QuickAccessUI(this.overlay, {
       openMap: () => this.openWeatherMap(),
+      openWorldMap: () => this.openWorldMap("map"),
+      openJournal: () => this.openWorldMap("journal"),
       openInventory: () => this.openInventory(),
       openCommands: () => this.command.openWithPrefix("/"),
       openCommandTable: () => this.command.openCommandTable(),
@@ -714,6 +731,7 @@ export class Game {
     this.weatherRenderer.update(delta);
     this.updateForecastAndAlerts(delta);
     this.weatherMapUI.update(delta);
+    this.worldMapJournalUI.update(delta);
     this.shelterRefreshTimer -= delta;
     if (this.shelterRefreshTimer <= 0) {
       this.shelterRefreshTimer = 0.45;
@@ -755,6 +773,8 @@ export class Game {
     if (this.input.wasPressed("Escape")) {
       if (this.weatherMapUI.isOpen()) {
         this.weatherMapUI.close();
+      } else if (this.worldMapJournalUI.isOpen()) {
+        this.worldMapJournalUI.close();
       } else if (this.inventory.isOpen()) {
         this.inventory.close();
       } else if (this.pauseMenu.isOpen()) {
@@ -768,6 +788,12 @@ export class Game {
     }
     if (this.input.wasPressed("KeyM") && !this.pauseMenu.isOpen() && !this.inventory.isOpen()) {
       this.openWeatherMap();
+    }
+    if (this.input.wasPressed("KeyJ") && !this.pauseMenu.isOpen() && !this.inventory.isOpen()) {
+      this.openWorldMap("journal");
+    }
+    if (this.input.wasPressed("KeyN") && !this.pauseMenu.isOpen() && !this.inventory.isOpen()) {
+      this.openWorldMap("map");
     }
     if (this.input.wasPressed("F1")) {
       this.command.openCommandTable();
@@ -1104,7 +1130,7 @@ export class Game {
   }
 
   private isUiBlocking(): boolean {
-    return this.mainMenu.isOpen() || this.pauseMenu.isOpen() || this.inventory.isOpen() || this.command.isOpen() || this.weatherMapUI.isOpen() || !this.started;
+    return this.mainMenu.isOpen() || this.pauseMenu.isOpen() || this.inventory.isOpen() || this.command.isOpen() || this.weatherMapUI.isOpen() || this.worldMapJournalUI.isOpen() || !this.started;
   }
 
   /**
@@ -1405,7 +1431,17 @@ export class Game {
     if (!this.started) return;
     this.pauseMenu.hide();
     this.inventory.close();
+    this.worldMapJournalUI.close();
     this.weatherMapUI.open();
+    if (document.pointerLockElement) document.exitPointerLock();
+  }
+
+  private openWorldMap(tab: "map" | "journal"): void {
+    if (!this.started) return;
+    this.pauseMenu.hide();
+    this.inventory.close();
+    this.weatherMapUI.close();
+    this.worldMapJournalUI.open(tab);
     if (document.pointerLockElement) document.exitPointerLock();
   }
 
@@ -1413,6 +1449,7 @@ export class Game {
     if (!this.started) return;
     this.pauseMenu.hide();
     this.weatherMapUI.close();
+    this.worldMapJournalUI.close();
     this.inventory.show();
   }
 

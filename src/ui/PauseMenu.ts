@@ -8,6 +8,7 @@ export class PauseMenu {
       resume: () => void;
       save: () => void;
       openMap: () => void;
+      openWorldMap: () => void;
       openInventory: () => void;
       openCommands: () => void;
       openWorlds: () => void;
@@ -26,6 +27,7 @@ export class PauseMenu {
     stack.append(
       this.button("Reprendre", callbacks.resume),
       this.button("Carte meteo", callbacks.openMap, "secondary"),
+      this.button("Carte monde / journal", callbacks.openWorldMap, "secondary"),
       this.button("Inventaire / craft", callbacks.openInventory, "secondary"),
       this.button("Commandes", callbacks.openCommands, "secondary"),
       this.button("Mes mondes", callbacks.openWorlds, "secondary"),

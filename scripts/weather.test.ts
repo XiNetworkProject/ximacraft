@@ -41,6 +41,10 @@ import { SpatialAudioMixer } from "../src/assets/SpatialAudioMixer";
 import { PlayerInventory } from "../src/player/PlayerInventory";
 import { CraftingSystem } from "../src/items/CraftingSystem";
 import { SmeltingSystem } from "../src/items/SmeltingSystem";
+import { WorldMemorySystem } from "../src/living/WorldMemorySystem";
+import { World } from "../src/world/World";
+import { BlockRegistry } from "../src/world/BlockRegistry";
+import { buildWorldMapData } from "../src/ui/WorldMapJournalUI";
 
 let passed = 0;
 let failed = 0;
@@ -532,6 +536,24 @@ console.log("\n[inventory] survival inventory, crafting grid and furnace have re
   smelting.updateFurnace(furnace, 6);
   check("furnace progress produces output after recipe duration", furnace.output?.blockId === BlockId.GLASS && furnace.output.count >= 1);
   check("furnace consumes fuel and input instead of auto-smelting inventory", (furnace.input?.count ?? 0) <= 1 && (furnace.fuel?.count ?? 0) <= 1);
+}
+
+// ============================================================================
+console.log("\n[map] world map and journal are generated from real world state");
+{
+  const world = new World("journal-map-seed", new BlockRegistry());
+  const memory = new WorldMemorySystem();
+  const surface = new SurfaceWeatherState((x, z) => world.getSurfaceHeight(x, z));
+  const sample = new WeatherEngine().sampleObserver();
+  memory.update(1, world, surface, { x: 64, z: 64 }, sample);
+  memory.update(1, world, surface, { x: 118, z: 42 }, { ...sample, weatherType: WeatherType.LIGHT_RAIN, precipitation: 0.25 });
+  const journal = memory.snapshot();
+  const mapA = buildWorldMapData(world, { x: 118, z: 42 }, 1024, 64, journal);
+  const mapB = buildWorldMapData(world, { x: 118, z: 42 }, 1024, 64, journal);
+  check("world journal records visited biomes and weather", journal.biomes.length >= 1 && journal.weather.includes(WeatherType.LIGHT_RAIN));
+  check("world map samples deterministic terrain around the player", JSON.stringify(mapA.samples.slice(0, 16)) === JSON.stringify(mapB.samples.slice(0, 16)));
+  check("world map exposes relief, biome and water/road layers", mapA.samples.length > 100 && mapA.samples.some((s) => s.height !== mapA.samples[0].height) && mapA.samples.some((s) => s.biome));
+  check("world map carries player marker and journal snapshot", mapA.player.x === 118 && mapA.journal.distanceTravelled > 0);
 }
 
 // ============================================================================
