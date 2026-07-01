@@ -19,6 +19,7 @@ import { WeatherSystem } from "../world/WeatherSystem";
 import { World } from "../world/World";
 import { WeatherEngine } from "../weather/WeatherEngine";
 import { WeatherDirector } from "../weather/WeatherDirector";
+import { WeatherVisualDirector } from "../weather/WeatherVisualDirector";
 import { ForecastSystem } from "../weather/forecast/ForecastSystem";
 import type { ForecastTimeline } from "../weather/forecast/ForecastTimeline";
 import { WeatherAlertSystem } from "../weather/alerts/WeatherAlertSystem";
@@ -170,6 +171,7 @@ export class Game {
   private readonly inventory: InventoryUI;
   private readonly debug: DebugOverlay;
   private readonly profiler: Profiler;
+  private readonly weatherVisual: WeatherVisualDirector;
   private readonly command: CommandSystem;
   private readonly weatherMapUI: WeatherMapUI;
   private readonly worldMapJournalUI: WorldMapJournalUI;
@@ -235,6 +237,13 @@ export class Game {
     this.skyCloudPopulation = new SkyCloudPopulationRenderer(this.renderer.scene);
     this.renderer.setFrameCompositor(this.cloudVolumeRenderer);
     this.sky = new SkySystem(this.renderer);
+    // Autorité visuelle météo (source unique + bascule A/B). Mode `new` par
+    // défaut : coupe le dôme fBm stratiforme (plafond quadrillé) et les sprites
+    // 2D ; garde les nuages convectifs volumétriques (ancrés monde).
+    this.weatherVisual = new WeatherVisualDirector({
+      stratiformDome: this.sky.clouds,
+      cloudSprites: this.skyCloudPopulation,
+    });
 
     this.hud = new HUD(this.overlay);
     this.hotbar = new HotbarUI(this.overlay, this.player.inventory, this.blockRegistry, this.textureManager);
@@ -631,9 +640,9 @@ export class Game {
     this.sky.weatherSample = this.weatherEngine.sampleObserver();
     this.sky.weatherScene = weatherScene;
     this.weather.syncRegional(this.sky.weatherSample);
-    const tSky = this.profiler.begin();
+    const tAtmosphere = this.profiler.begin();
     const dayFactor = this.sky.updateWithWorld(delta, this.time, this.weather, this.player, world);
-    this.profiler.add("sky", tSky);
+    this.profiler.add("atmosphere", tAtmosphere);
     // Nuages convectifs procéduraux (sim particulaire + rendu d'ellipsoïdes).
     const sunAng = (this.time.ticks / WORLD_DAY_TICKS) * Math.PI * 2;
     this.sunDirScratch.set(Math.cos(sunAng), Math.max(0.15, Math.sin(sunAng)), -0.4).normalize();
@@ -743,6 +752,7 @@ export class Game {
       fog: Number(environment.fog.density.toFixed(2)),
       visibility: environment.fog.visibilityMeters,
     });
+    const tPrecip = this.profiler.begin();
     this.groundRenderer.update(delta, camera);
     this.weatherVisualTimer -= delta;
     this.weatherVisualDelta += delta;
@@ -763,6 +773,7 @@ export class Game {
       { dayFactor, lightning: this.lightningRenderer.flashAmount },
       weatherScene.precipitation,
     );
+    this.profiler.add("precip", tPrecip);
     if (hasWeatherVisuals && this.weatherVisualTimer <= 0) {
       this.weatherVisualTimer = this.qualityPreset === "high" ? 0.06 : this.qualityPreset === "balanced" ? 0.14 : 0.28;
       if (this.qualityPreset !== "low") {
@@ -1363,6 +1374,7 @@ export class Game {
       worldMemory: this.worldMemory,
       environmentDirector: this.environmentDirector,
       radarHistory: this.radarHistory,
+      weatherVisual: this.weatherVisual,
     });
   }
 

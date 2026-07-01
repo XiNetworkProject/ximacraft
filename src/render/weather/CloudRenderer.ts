@@ -49,6 +49,12 @@ export class CloudRenderer {
   private readonly material: THREE.ShaderMaterial;
   private readonly offset = new THREE.Vector2(0, 0);
   private morph = 0;
+  /**
+   * Ce dôme fBm centré caméra est l'ancien rendu stratiforme (« plafond noir /
+   * quadrillé »). Désactivé par défaut par WeatherVisualDirector (mode `new`),
+   * conservé uniquement pour la comparaison A/B (`/weather visual mode legacy`).
+   */
+  private enabled = true;
 
   // Couleurs réutilisées (zéro allocation par frame).
   private readonly lightColor = new THREE.Color();
@@ -204,7 +210,21 @@ export class CloudRenderer {
     scene.add(this.mesh);
   }
 
+  /** Active/désactive ce renderer (A/B). En `new` mode il est coupé. */
+  setEnabled(enabled: boolean): void {
+    this.enabled = enabled;
+    this.mesh.visible = enabled;
+  }
+
+  isEnabled(): boolean {
+    return this.enabled;
+  }
+
   update(dt: number, params: CloudRenderParams): void {
+    if (!this.enabled) {
+      this.mesh.visible = false;
+      return;
+    }
     // Suit la caméra (nuages « à l'infini »).
     this.mesh.position.copy(params.cameraPosition);
 

@@ -16,6 +16,7 @@ import { ForecastSystem } from "../weather/forecast/ForecastSystem";
 import { WeatherAlertSystem } from "../weather/alerts/WeatherAlertSystem";
 import { WeatherMapUI } from "../ui/weather/WeatherMapUI";
 import { WeatherDirector } from "../weather/WeatherDirector";
+import { WeatherVisualDirector, WeatherVisualMode } from "../weather/WeatherVisualDirector";
 import { LivingWorldSystem } from "../living/LivingWorldSystem";
 import { SeasonSystem, SeasonId } from "../living/SeasonSystem";
 import { AmbientBiomeAudioSystem } from "../living/AmbientBiomeAudioSystem";
@@ -70,6 +71,8 @@ export type CommandContext = {
   environmentDirector?: EnvironmentDirector;
   /** Historique radar (pour `/weather debug radar` et la relecture). */
   radarHistory?: WeatherRadarHistory;
+  /** Autorité visuelle météo (mode A/B + tableau des renderers). */
+  weatherVisual?: WeatherVisualDirector;
 };
 
 const weatherTypes: WeatherType[] = [
@@ -86,6 +89,54 @@ const weatherTypes: WeatherType[] = [
   "rainbow",
   "mist",
 ];
+
+/** Vues debug unifiées du Weather Visual Lab. */
+const WEATHER_DEBUG_VIEWS = new Set(["field", "fronts", "cells", "cloudlayers"]);
+
+/**
+ * Scénarios du Weather Visual Lab. Chaque entrée route vers la simulation
+ * EXISTANTE (donc phénomène réellement placé dans le monde) et documente quel
+ * renderer le produit + où regarder.
+ */
+const VISUAL_SCENARIOS: Record<string, { command: string[]; look: string; renderer: string }> = {
+  clear: {
+    command: ["weather", "scenario", "clear_day"],
+    look: "ciel dégagé, soleil franc.",
+    renderer: "SkySystem (atmosphère).",
+  },
+  fair_cumulus: {
+    command: ["weather", "scenario", "fair_cumulus"],
+    look: "cumulus de beau temps séparés, sous ciel bleu ; ils dérivent avec le vent.",
+    renderer: "CloudVolumeRenderer (volumes raymarchés, ancrés monde).",
+  },
+  overcast: {
+    command: ["weather", "set", "cloudy", "radius=6000"],
+    look: "ciel couvert : assombrissement/atmosphère (pas de plafond quadrillé). Couche stratiforme = phase 2.",
+    renderer: "SkySystem (couverture régionale) ; deck volumétrique à venir.",
+  },
+  rain_front: {
+    command: ["weather", "scenario", "cold_front"],
+    look: "front froid mobile : ligne convective qui traverse la région depuis l'horizon.",
+    renderer: "WeatherEngine (front) + CloudVolumeRenderer + rideaux de pluie.",
+  },
+  valley_fog: {
+    command: ["weather", "scenario", "morning_fog"],
+    look: "brume basse (vallées) ; dégagé sur les hauteurs.",
+    renderer: "FogBankRenderer + THREE.Fog.",
+  },
+  snow_squall: {
+    command: ["weather", "scenario", "snow_squall"],
+    look: "grain de neige mobile avec accumulation au sol.",
+    renderer: "WeatherEngine + PrecipitationRenderer + WorldSnowSystem.",
+  },
+  thunderstorm: {
+    command: ["weather", "scenario", "isolated_thunderstorm"],
+    look: "cellule orageuse isolée placée dans le monde, ciel bleu autour ; regarde l'horizon.",
+    renderer: "CloudVolumeRenderer (cumulonimbus raymarché) + éclairs + rideaux.",
+  },
+};
+
+const VISUAL_SCENARIO_NAMES = Object.keys(VISUAL_SCENARIOS);
 
 export type CommandDefinition = {
   usage: string;
@@ -120,6 +171,10 @@ export const COMMANDS: CommandDefinition[] = [
   { usage: "/weather cinematic blizzard_night", prefix: "/weather cinematic blizzard_night", description: "Spawn a dark wind-driven night blizzard." },
   { usage: "/weather cinematic hail_core", prefix: "/weather cinematic hail_core", description: "Spawn a hail core." },
   { usage: "/weather cinematic sunset_rainbow", prefix: "/weather cinematic sunset_rainbow", description: "Spawn sunset rain and rainbow conditions." },
+  { usage: "/weather visual clear|fair_cumulus|overcast|rain_front|valley_fog|snow_squall|thunderstorm", prefix: "/weather visual", description: "Weather Visual Lab: place a real world-anchored phenomenon and name its renderer." },
+  { usage: "/weather visual mode new|legacy", prefix: "/weather visual mode", description: "A/B toggle: new (fBm dome + 2D sprites OFF) vs legacy (old renderers ON)." },
+  { usage: "/weather visual layers", prefix: "/weather visual layers", description: "Show the single-authority table: which renderer draws each phenomenon." },
+  { usage: "/weather debug field|fronts|cells|cloudlayers", prefix: "/weather debug field", description: "Weather value under player, active fronts/cells (dir/speed), volumetric cells (base/top), cloud layers." },
   { usage: "/weather scenario clear_day|fair_cumulus|warm_front|isolated_thunderstorm|morning_fog|steady_snow|blizzard|...", prefix: "/weather scenario", description: "Drive a full multi-phase weather scenario (clear, cumulus, fronts, storms, snow, fog, haze)." },
   { usage: "/weather scenario clear_spring|summer_heatwave|autumn_rain|winter_fog|lake_morning_mist|post_storm_clearing", prefix: "/weather scenario", description: "Seasonal environment scenarios coupled to the world state." },
   { usage: "/weather debug scene|plan|layers|precipitation|cloud_population|lightning", prefix: "/weather debug scene", description: "Inspect the multi-axis weather scene, plan, layers, precipitation and lightning." },
@@ -386,6 +441,16 @@ export class CommandSystem {
 
   private executeWeather(parts: string[]): void {
     const context = this.context!;
+    // Weather Visual Lab : /weather visual <scénario|mode|layers>.
+    if (parts[1] === "visual") {
+      this.executeWeatherVisual(parts);
+      return;
+    }
+    // Vues debug unifiées : /weather debug field|fronts|cells|cloudlayers.
+    if (parts[1] === "debug" && WEATHER_DEBUG_VIEWS.has(parts[2] ?? "")) {
+      this.executeWeatherDebugView(parts);
+      return;
+    }
     if (this.executeEnvironmentWeather(parts)) {
       return;
     }
@@ -413,6 +478,139 @@ export class CommandSystem {
     context.weather.setWeather(type, Number.isFinite(duration) ? duration : undefined);
     this.spawnRegionalWeather(type, type === "thunderstorm" || type === "blizzard" ? 1 : 0.82);
     this.write(`Weather changed to ${type}${Number.isFinite(duration) ? ` for ${duration} seconds` : ""}.`);
+  }
+
+  /**
+   * Weather Visual Lab. `/weather visual <scénario>` place un phénomène RÉEL
+   * dans le monde (via la simulation existante) et rappelle quel renderer le
+   * produit. `/weather visual mode new|legacy` bascule l'A/B. `/weather visual
+   * layers` liste l'autorité de rendu par phénomène.
+   */
+  private executeWeatherVisual(parts: string[]): void {
+    const context = this.context!;
+    const visual = context.weatherVisual;
+    const sub = parts[2];
+
+    if (!sub || sub === "help") {
+      this.write(`Usage: /weather visual <${VISUAL_SCENARIO_NAMES.join("|")}>`);
+      this.write("       /weather visual mode new|legacy   |   /weather visual layers");
+      return;
+    }
+
+    if (sub === "layers") {
+      if (!visual) {
+        this.write("Weather visual director unavailable.");
+        return;
+      }
+      for (const line of visual.layersReport()) this.write(line);
+      return;
+    }
+
+    if (sub === "mode") {
+      if (!visual) {
+        this.write("Weather visual director unavailable.");
+        return;
+      }
+      const target = parts[3] as WeatherVisualMode | undefined;
+      if (target !== "new" && target !== "legacy") {
+        this.write(`Current visual mode: ${visual.getMode()}. Usage: /weather visual mode new|legacy`);
+        return;
+      }
+      visual.setMode(target);
+      this.write(
+        target === "new"
+          ? "Visual mode NEW : dôme fBm + sprites 2D coupés ; nuages convectifs volumétriques (ancrés monde) conservés."
+          : "Visual mode LEGACY : anciens renderers réactivés pour comparaison A/B (dôme + sprites).",
+      );
+      return;
+    }
+
+    const scenario = VISUAL_SCENARIOS[sub];
+    if (!scenario) {
+      this.write(`Unknown visual scenario '${sub}'. Try: ${VISUAL_SCENARIO_NAMES.join(", ")}`);
+      return;
+    }
+    // Le laboratoire se joue toujours dans le nouveau rendu.
+    visual?.setMode("new");
+    const handled = this.weatherCommands?.handle(scenario.command.slice());
+    if (!handled) {
+      this.write(`Visual scenario '${sub}' could not start.`);
+      return;
+    }
+    this.write(`▶ Visual: ${sub} — ${scenario.look}`);
+    this.write(`   Renderer: ${scenario.renderer}`);
+    this.write("   Astuce: /weather debug cells|fronts|field|cloudlayers pour voir les coordonnées monde.");
+  }
+
+  /** Vues debug unifiées lisant la simulation (source de vérité unique). */
+  private executeWeatherDebugView(parts: string[]): void {
+    const context = this.context!;
+    const view = parts[2];
+    const px = context.player.position.x;
+    const pz = context.player.position.z;
+
+    if (view === "field") {
+      const s = context.weatherEngine.sampleAt(px, pz);
+      const scene = context.weatherDirector.scenarios.currentScene;
+      this.write(`— Champ météo sous le joueur (${Math.round(px)}, ${Math.round(pz)}) —`);
+      this.write(`type=${s.weatherType} temp=${s.temperature.toFixed(1)}°C humid=${Math.round(s.humidity * 100)}% pression=${Math.round(s.pressure)}hPa`);
+      this.write(`couverture=${Math.round(s.cloudCover * 100)}% précip=${s.precipitation.toFixed(2)} instab=${s.instability.toFixed(2)} orage=${s.thunderRisk.toFixed(2)}`);
+      this.write(`vent=${s.windSpeed.toFixed(1)} (${this.windCardinal(s.windX, s.windZ)}) dx=${s.windX.toFixed(1)} dz=${s.windZ.toFixed(1)}`);
+      if (scene) {
+        this.write(`scène: précip ${scene.precipitation.kind} int=${scene.precipitation.intensity.toFixed(2)} sol=${scene.precipitation.reachesGround ? "oui" : "non"} | visib=${scene.visibility.range.toFixed(2)} fog=${scene.visibility.fogDensity.toFixed(2)}`);
+      }
+      return;
+    }
+
+    if (view === "fronts") {
+      const events = context.weatherEngine.getActiveEvents();
+      this.write(`— Fronts / cellules actifs: ${events.length} —`);
+      if (events.length === 0) this.write("(aucun événement — /weather visual rain_front ou thunderstorm)");
+      for (const ev of events.slice(0, 10)) {
+        const dist = Math.round(Math.hypot(ev.x - px, ev.z - pz));
+        const move = ev.speed > 0.01 ? `→${this.windCardinal(ev.dirX, ev.dirZ)} ${ev.speed.toFixed(1)}b/s` : "stationnaire";
+        this.write(`#${ev.id} ${ev.type} @(${Math.round(ev.x)},${Math.round(ev.z)}) dist=${dist} r=${Math.round(ev.radius)} phase=${ev.phase} ${move} précip=${ev.precip} int=${ev.intensity.toFixed(2)}`);
+      }
+      return;
+    }
+
+    if (view === "cells") {
+      const renderer = context.cloudVolumeRenderer;
+      this.write("— Cellules nuageuses volumétriques (ancrées monde) —");
+      if (!renderer) {
+        this.write("CloudVolumeRenderer indisponible.");
+        return;
+      }
+      const lines = renderer.debugSummary({ x: px, z: pz });
+      if (lines.length === 0) this.write("(aucune masse convective active près de toi)");
+      for (const line of lines.slice(0, 10)) this.write(line);
+      for (const line of renderer.debugPerformanceSummary()) this.write(line);
+      return;
+    }
+
+    if (view === "cloudlayers") {
+      const scene = context.weatherDirector.scenarios.currentScene;
+      this.write("— Couches nuageuses (base/sommet, couverture) —");
+      if (context.weatherVisual) this.write(`mode visuel: ${context.weatherVisual.getMode()}`);
+      if (!scene || scene.cloudLayers.length === 0) {
+        this.write("(aucune couche dans la scène courante)");
+        return;
+      }
+      for (const layer of scene.cloudLayers) {
+        if (layer.coverage <= 0.01) continue;
+        this.write(`${layer.type}: base=${Math.round(layer.baseHeight)} sommet=${Math.round(layer.topHeight)} couv=${Math.round(layer.coverage * 100)}% opac=${layer.opacity.toFixed(2)}`);
+      }
+      this.write("Autorité rendu: stratiforme=phase 2 (dôme legacy off) | convectif=CloudVolumeRenderer");
+      return;
+    }
+  }
+
+  private windCardinal(x: number, z: number): string {
+    if (Math.hypot(x, z) < 0.01) return "—";
+    const dirs = ["E", "SE", "S", "SW", "W", "NW", "N", "NE"];
+    const angle = Math.atan2(z, x);
+    const index = Math.round((angle / (Math.PI * 2)) * 8 + 8) % 8;
+    return dirs[index];
   }
 
   private executeEnvironmentWeather(parts: string[]): boolean {

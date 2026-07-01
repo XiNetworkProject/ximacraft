@@ -16,6 +16,11 @@ export class SkyCloudPopulationRenderer {
   private readonly developments = new Float32Array(MAX_PUFFS);
   private time = 0;
   private count = 0;
+  /**
+   * Sprites/points « stickers 2D » : ancien rendu des cumulus lointains.
+   * Désactivé par défaut (mode `new`), gardé pour comparaison A/B.
+   */
+  private enabled = true;
 
   constructor(scene: THREE.Scene) {
     this.geometry.setAttribute("position", new THREE.BufferAttribute(this.positions, 3).setUsage(THREE.DynamicDrawUsage));
@@ -149,6 +154,14 @@ export class SkyCloudPopulationRenderer {
     dayFactor: number,
     sunDirection: THREE.Vector3,
   ): void {
+    if (!this.enabled) {
+      if (this.count !== 0 || this.points.visible) {
+        this.count = 0;
+        this.geometry.setDrawRange(0, 0);
+        this.points.visible = false;
+      }
+      return;
+    }
     this.time += dt;
     let count = 0;
     const cameraPosition = camera.position;
@@ -206,6 +219,16 @@ export class SkyCloudPopulationRenderer {
     );
     this.material.uniforms.uViewportHeight.value = Math.max(320, window.innerHeight * window.devicePixelRatio);
     (this.material.uniforms.uSunDir.value as THREE.Vector3).copy(sunDirection).normalize();
+  }
+
+  /** Active/désactive les sprites (A/B). En `new` mode ils sont coupés. */
+  setEnabled(enabled: boolean): void {
+    this.enabled = enabled;
+    if (!enabled) this.points.visible = false;
+  }
+
+  isEnabled(): boolean {
+    return this.enabled;
   }
 
   /** Couleur de brume d'horizon pour la perspective aérienne des nuages. */
