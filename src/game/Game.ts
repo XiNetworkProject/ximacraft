@@ -706,6 +706,8 @@ export class Game {
       delta,
     });
     this.profiler.add("stratiform_clouds", tStratiform);
+    // Coût réel (mesuré une fois) du bake du bruit 3D stratiforme (0 si fallback 2D).
+    this.profiler.addMs("stratiform_noise", this.stratiformClouds.noiseBakeMs);
     // Ombres de nuages au sol : couverture régionale + masses convectives.
     this.cloudShadows.update(delta, {
       sunDirection: this.sky.sunDirection,

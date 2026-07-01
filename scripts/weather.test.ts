@@ -37,7 +37,7 @@ import { WeatherRadarHistory } from "../src/weather/map/WeatherRadarHistory";
 import { FogDensitySampler } from "../src/render/weather/fog/FogDensitySampler";
 import type { FogBankRenderSample } from "../src/environment/FogBankSystem";
 import { FogLodSystem } from "../src/render/weather/fog/FogLodSystem";
-import { resolveStratiformLayerSpecs } from "../src/render/weather/StratiformCloudRenderer";
+import { resolveStratiformLayerSpecs, StratiformCloudRenderer } from "../src/render/weather/StratiformCloudRenderer";
 import { EntityAssetManager } from "../src/living/EntityAssetManager";
 import { EntityAnimationController } from "../src/living/EntityAnimationController";
 import { SpatialAudioMixer } from "../src/assets/SpatialAudioMixer";
@@ -206,6 +206,82 @@ console.log("\n[visual lab] deterministic reset and scenarios");
   check("visual A->clear removes all residue", switchHarness.engine.activeEventCount === 0 && switchHarness.convectiveClouds.masses.length === 0);
   runVisualLab("rain_front", switchHarness);
   check("visual clear->rain_front has no storm residue", visualLabStormCellCount(switchHarness.engine) === 0 && switchHarness.engine.getActiveEvents().every((event) => event.type === "rain_band"));
+}
+
+// ============================================================================
+console.log("\n[stratiform] world-anchored decks: no residue, stable anchors, headless-safe");
+{
+  // overcast -> clear -> overcast : aucun résidu de deck, reconstruction propre.
+  const cycle = makeVisualLabHarness();
+  runVisualLab("overcast", cycle);
+  const firstDecks = resolveStratiformLayerSpecs(cycle.director.currentScene, cycle.engine.getActiveEvents(), { x: 0, z: 0 });
+  runVisualLab("clear", cycle);
+  const clearedDecks = resolveStratiformLayerSpecs(cycle.director.currentScene, cycle.engine.getActiveEvents(), { x: 0, z: 0 });
+  runVisualLab("overcast", cycle);
+  const againDecks = resolveStratiformLayerSpecs(cycle.director.currentScene, cycle.engine.getActiveEvents(), { x: 0, z: 0 });
+  check("overcast produces a deck", firstDecks.length >= 1, `decks=${firstDecks.map((d) => d.kind).join(",")}`);
+  check("overcast -> clear leaves no deck residue", clearedDecks.length === 0, `decks=${clearedDecks.map((d) => d.kind).join(",")}`);
+  check("clear -> overcast rebuilds the stratiform deck", againDecks.some((d) => d.kind === "stratocumulus"));
+
+  // Déplacement sur plusieurs "ancres" : le deck scene garde le MÊME id (pas de
+  // remplacement brutal) et suit l'observateur en XZ (bruit ancré monde absolu).
+  const move = runVisualLab("overcast");
+  const near = resolveStratiformLayerSpecs(move.director.currentScene, move.engine.getActiveEvents(), { x: 0, z: 0 });
+  const far = resolveStratiformLayerSpecs(move.director.currentScene, move.engine.getActiveEvents(), { x: 12000, z: -9000 });
+  const nearScene = near.find((d) => d.source === "scene");
+  const farScene = far.find((d) => d.source === "scene");
+  check("scene deck id is stable across anchors", !!nearScene && !!farScene && nearScene.id === farScene.id, `near=${nearScene?.id} far=${farScene?.id}`);
+  check("scene deck follows the observer in XZ", !!farScene && Math.abs(farScene.x - 12000) < 1 && Math.abs(farScene.z + 9000) < 1, `x=${farScene?.x} z=${farScene?.z}`);
+
+  // Le renderer complet (bake bruit 3D + update) tourne headless sans planter.
+  const scene = new THREE.Scene();
+  const renderer = new StratiformCloudRenderer(scene);
+  const camera = new THREE.PerspectiveCamera(70, 1, 0.1, 3000);
+  camera.position.set(12000, 70, -9000);
+  const sun = new THREE.Vector3(0.3, 0.9, -0.2).normalize();
+  let threw = false;
+  try {
+    for (let i = 0; i < 4; i += 1) {
+      renderer.update({
+        scene: move.director.currentScene,
+        events: move.engine.getActiveEvents(),
+        camera,
+        observerX: 12000,
+        observerZ: -9000,
+        dayFactor: 1,
+        sunDirection: sun,
+        time: i * 0.5,
+        quality: "balanced",
+        delta: 0.5,
+      });
+    }
+  } catch (error) {
+    threw = true;
+    console.log(String(error));
+  }
+  const debug = renderer.debugState();
+  check("stratiform renderer updates headless without throwing", !threw);
+  check("stratiform renderer activates a deck under overcast", debug.active && debug.visibleCount >= 1, `active=${debug.active} count=${debug.visibleCount}`);
+  check("stratiform renderer reports a real bake or clean 2D fallback", debug.noiseBakeMs > 0 || debug.noise3D === false, `bake=${debug.noiseBakeMs.toFixed(2)} noise3D=${debug.noise3D}`);
+  const atmosphere = renderer.atmosphereState();
+  check("stratiform overcast atmosphere is overhead", !!atmosphere && atmosphere.overhead, `atm=${JSON.stringify(atmosphere)}`);
+
+  // Bascule vers un ciel clair : le deck disparaît sans résidu de slot visible.
+  const clearScene = runVisualLab("clear");
+  renderer.update({
+    scene: clearScene.director.currentScene,
+    events: clearScene.engine.getActiveEvents(),
+    camera,
+    observerX: 12000,
+    observerZ: -9000,
+    dayFactor: 1,
+    sunDirection: sun,
+    time: 6,
+    quality: "balanced",
+    delta: 1,
+  });
+  check("stratiform renderer clears the deck when the scene goes clear", renderer.debugState().visibleCount === 0, `count=${renderer.debugState().visibleCount}`);
+  renderer.dispose();
 }
 
 // ============================================================================

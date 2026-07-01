@@ -92,5 +92,9 @@ tableau et les en-têtes de fichiers seront mis à jour.
 | Toft/Bowles/Zimmermann | arXiv | ÉTUDIÉ | — | — |
 | WMO Cloud Atlas | WMO | ÉTUDIÉ | — | — |
 | Met Office clouds/fog | Crown © | ÉTUDIÉ | — | — |
+| SebLague/Clouds | MIT (c) 2019 Sebastian Lague | ADAPTÉ (clean-room) | `StratiformCloudRenderer.ts`, `StratiformNoiseTextures.ts` | `LICENSES/seb-lague-clouds-MIT.txt` + en-têtes fichiers |
+| frmlinn/clouds-sim | MIT (c) 2026 frmlinn | ADAPTÉ (clean-room) | `StratiformNoiseTextures.ts`, `StratiformCloudRenderer.ts` | `LICENSES/clouds-sim-MIT.txt` + en-têtes fichiers |
+| mhr1235/cl0ud | non confirmée | INSPIRATION ESTHÉTIQUE — aucun code | — | — |
 
+Détail Phase 2A-2 (couches stratiformes) : voir `docs/CLOUDS_REFERENCES.md`.
 Mettre ce tableau à jour dès qu'un fichier reprend du code d'une source.
