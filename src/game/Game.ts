@@ -45,6 +45,7 @@ import { WorldSnowSystem } from "../weather/ground/WorldSnowSystem";
 import { GroundCoverRenderer } from "../render/weather/GroundCoverRenderer";
 import { PrecipitationRenderer } from "../render/weather/PrecipitationRenderer";
 import { RainCurtainRenderer } from "../render/weather/RainCurtainRenderer";
+import { StratiformCloudRenderer } from "../render/weather/StratiformCloudRenderer";
 import { LightningSystem } from "../weather/LightningSystem";
 import { LightningRenderer } from "../render/weather/LightningRenderer";
 import { ConvectiveCloudSystem } from "../clouds/ConvectiveCloudSystem";
@@ -155,6 +156,7 @@ export class Game {
   private readonly groundRenderer: GroundCoverRenderer;
   private readonly precipitation: PrecipitationRenderer;
   private readonly rainCurtains: RainCurtainRenderer;
+  private readonly stratiformClouds: StratiformCloudRenderer;
   private readonly windVisuals: WindVisualSystem;
   private readonly lightning = new LightningSystem();
   private readonly lightningRenderer: LightningRenderer;
@@ -231,6 +233,7 @@ export class Game {
     this.precipitation = new PrecipitationRenderer(this.renderer.scene);
     this.rainCurtains = new RainCurtainRenderer(this.renderer.scene);
     this.rainCurtains.setEnabled(false);
+    this.stratiformClouds = new StratiformCloudRenderer(this.renderer.scene);
     // Volumétrique désactivé (rendu "soucoupe" blob) : les orages passent par
     // CloudMassRenderer (billboards tour + enclume), cohérent avec le style voxel.
     this.windVisuals = new WindVisualSystem(this.renderer.scene);
@@ -247,6 +250,7 @@ export class Game {
     // 2D ; garde les nuages convectifs volumétriques (ancrés monde).
     this.weatherVisual = new WeatherVisualDirector({
       stratiformDome: this.sky.clouds,
+      stratiformClouds: this.stratiformClouds,
       cloudSprites: this.skyCloudPopulation,
       distantPrecipitation: this.rainCurtains,
     }, this.overlay);
@@ -501,6 +505,7 @@ export class Game {
     this.weatherEngine.reset();
     this.radarHistory.reset();
     this.convectiveClouds.clear();
+    this.stratiformClouds.clear();
     this.stormCloudMasses.clear();
     this.loading("climate", 0.2);
     this.currentSeed = seed;
@@ -645,6 +650,7 @@ export class Game {
     // Le ciel lit la couverture/vent régionaux pour piloter les nuages shader.
     this.sky.weatherSample = this.weatherEngine.sampleObserver();
     this.sky.weatherScene = weatherScene;
+    this.sky.setStratiformAtmosphere(this.stratiformClouds.atmosphereState());
     this.weather.syncRegional(this.sky.weatherSample);
     const tAtmosphere = this.profiler.begin();
     const dayFactor = this.sky.updateWithWorld(delta, this.time, this.weather, this.player, world);
@@ -686,6 +692,20 @@ export class Game {
     const events = this.weatherEngine.getActiveEvents();
     const camera = this.renderer.camera.position;
     const season = this.seasonSystem.sample(this.time.ticks);
+    const tStratiform = this.profiler.begin();
+    this.stratiformClouds.update({
+      scene: weatherScene,
+      events,
+      camera: this.renderer.camera,
+      observerX: this.player.position.x,
+      observerZ: this.player.position.z,
+      dayFactor,
+      sunDirection: this.sky.sunDirection,
+      time: this.weatherEngine.state.time,
+      quality: this.qualityPreset,
+      delta,
+    });
+    this.profiler.add("stratiform_clouds", tStratiform);
     // Ombres de nuages au sol : couverture régionale + masses convectives.
     this.cloudShadows.update(delta, {
       sunDirection: this.sky.sunDirection,
@@ -812,6 +832,7 @@ export class Game {
       },
       fogDensity: environment.fog.density,
       snowDepth: this.surfaceState.get(this.player.position.x, this.player.position.z)?.snowDepth ?? 0,
+      stratiformClouds: this.stratiformClouds.debugState(),
       precipitationRenderer: this.precipitation.debugState,
       rainCurtains: this.rainCurtains.debugState,
     });
@@ -1383,6 +1404,7 @@ export class Game {
       resetCloudVisuals: () => {
         this.convectiveClouds.clear();
         this.regionalClouds.reset();
+        this.stratiformClouds.clear();
         this.stormCloudMasses.clear();
       },
       groundSystem: this.groundSystem,
@@ -1432,6 +1454,7 @@ export class Game {
       resetCloudVisuals: () => {
         this.convectiveClouds.clear();
         this.regionalClouds.reset();
+        this.stratiformClouds.clear();
         this.stormCloudMasses.clear();
       },
       livingWorld: this.livingWorld,

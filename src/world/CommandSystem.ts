@@ -113,13 +113,13 @@ const VISUAL_SCENARIOS: Record<string, { command: string[]; look: string; render
   },
   overcast: {
     command: ["weather", "set", "cloudy", "radius=6000"],
-    look: "ciel couvert : assombrissement/atmosphère (pas de plafond quadrillé). Couche stratiforme = phase 2.",
-    renderer: "SkySystem (couverture régionale) ; deck volumétrique à venir.",
+    look: "ciel couvert : deck stratiforme world-space, lumiere diffuse, pas de plafond quadrille.",
+    renderer: "StratiformCloudRenderer + SkySystem atmosphere.",
   },
   rain_front: {
     command: ["weather", "scenario", "cold_front"],
-    look: "front froid mobile : ligne convective qui traverse la région depuis l'horizon.",
-    renderer: "WeatherEngine (front) + CloudVolumeRenderer + rideaux de pluie.",
+    look: "front pluvieux mobile : large nimbostratus a distance, sans orage.",
+    renderer: "WeatherEngine rain_band + StratiformCloudRenderer + pluie locale quand le front arrive.",
   },
   valley_fog: {
     command: ["weather", "scenario", "morning_fog"],
@@ -605,7 +605,7 @@ export class CommandSystem {
         if (layer.coverage <= 0.01) continue;
         this.write(`${layer.type}: base=${Math.round(layer.baseHeight)} sommet=${Math.round(layer.topHeight)} couv=${Math.round(layer.coverage * 100)}% opac=${layer.opacity.toFixed(2)}`);
       }
-      this.write("Autorité rendu: stratiforme=phase 2 (dôme legacy off) | convectif=CloudVolumeRenderer");
+      this.write("Autorité rendu: stratiforme=StratiformCloudRenderer | convectif=CloudVolumeRenderer");
       return;
     }
   }

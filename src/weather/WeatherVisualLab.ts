@@ -4,7 +4,7 @@ import { SurfaceWeatherState } from "./ground/SurfaceWeatherState";
 import { WeatherEngine } from "./WeatherEngine";
 import { classifyWeather } from "./WeatherMath";
 import { CELL_SIZE, WeatherEventType } from "./WeatherTypes";
-import { SynopticRegime } from "./scene/WeatherScene";
+import { PrecipitationKind, SkyState, SynopticRegime } from "./scene/WeatherScene";
 import { WeatherScenarioDirector } from "./scene/WeatherScenarioDirector";
 
 export type WeatherVisualScenarioName =
@@ -158,9 +158,11 @@ export function startWeatherVisualLabScenario(
     case "overcast":
       targets.setTime?.("noon");
       targets.scenarios.hold(SynopticRegime.WEAK_LOW_PRESSURE, 900);
+      targets.scenarios.forceSky(SkyState.STRATOCUMULUS_OVERCAST, 900, "none");
+      targets.scenarios.forcePrecipitation(PrecipitationKind.NONE, 0, 900, "none", false);
       paintWeatherLabCells(targets.engine, {
         cloudCover: 0.82,
-        humidity: 0.64,
+        humidity: 0.54,
         instability: 0.05,
         temperature: 13,
         pressure: 1009,
@@ -172,15 +174,16 @@ export function startWeatherVisualLabScenario(
         scenario,
         label: "Couvert sec",
         forcedTime: "noon",
-        expected: "Aucun orage residuel. Le deck stratiforme final n'est pas encore implemente.",
-        renderers: ["SkySystem"],
+        expected: "Deck stratiforme world-space visible, gris/diffus, sans orage ni pluie.",
+        renderers: ["SkySystem atmosphere", "StratiformCloudRenderer"],
         warnings: [RAIN_CURTAINS_WARNING],
-        incomplete: "Couche stratiforme non implementee.",
       };
 
     case "rain_front": {
       targets.setTime?.("noon");
       targets.scenarios.hold(SynopticRegime.OCCLUDED_FRONT, 900);
+      targets.scenarios.forceSky(SkyState.MID_OVERCAST, 900, "none");
+      targets.scenarios.forcePrecipitation(PrecipitationKind.NONE, 0, 900, "none", false);
       paintWeatherLabCells(targets.engine, {
         cloudCover: 0.58,
         humidity: 0.58,
@@ -191,7 +194,7 @@ export function startWeatherVisualLabScenario(
         windZ: 6,
         radiusCells: 9,
       });
-      const band = targets.engine.spawnRainBand(3200, origin.x, origin.z - 5600);
+      const band = targets.engine.spawnRainBand(3600, origin.x, origin.z - 7200);
       band.intensity = 0.68;
       band.maxAge = 760;
       band.speed = 8;
@@ -201,8 +204,8 @@ export function startWeatherVisualLabScenario(
         scenario,
         label: "Front pluvieux stratiforme",
         forcedTime: "noon",
-        expected: "Une seule bande de pluie mobile, sans cellule orageuse ni eclair.",
-        renderers: ["WeatherEngine rain_band", "PrecipitationRenderer local quand le front arrive"],
+        expected: "Une seule bande de pluie mobile avec nimbostratus large, sans cellule orageuse ni eclair.",
+        renderers: ["WeatherEngine rain_band", "StratiformCloudRenderer", "PrecipitationRenderer local quand le front arrive"],
         warnings: [RAIN_CURTAINS_WARNING],
       };
     }

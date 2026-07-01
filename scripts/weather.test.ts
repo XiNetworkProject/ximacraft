@@ -37,6 +37,7 @@ import { WeatherRadarHistory } from "../src/weather/map/WeatherRadarHistory";
 import { FogDensitySampler } from "../src/render/weather/fog/FogDensitySampler";
 import type { FogBankRenderSample } from "../src/environment/FogBankSystem";
 import { FogLodSystem } from "../src/render/weather/fog/FogLodSystem";
+import { resolveStratiformLayerSpecs } from "../src/render/weather/StratiformCloudRenderer";
 import { EntityAssetManager } from "../src/living/EntityAssetManager";
 import { EntityAnimationController } from "../src/living/EntityAnimationController";
 import { SpatialAudioMixer } from "../src/assets/SpatialAudioMixer";
@@ -159,16 +160,33 @@ console.log("\n[visual lab] deterministic reset and scenarios");
   check("visual clear empties convective masses", clear.convectiveClouds.masses.length === 0, `masses=${clear.convectiveClouds.masses.length}`);
   check("visual clear has no local precipitation", clearSample.precipitation < 0.01, `precip=${clearSample.precipitation.toFixed(3)}`);
   check("visual clear disables distant rain curtains", clear.rainCurtains.enabled === false && clear.rainCurtains.cleared);
+  check("visual clear has no stratiform deck", resolveStratiformLayerSpecs(clear.director.currentScene, clear.engine.getActiveEvents(), { x: 0, z: 0 }).length === 0);
+
+  const overcast = runVisualLab("overcast");
+  const overcastDecks = resolveStratiformLayerSpecs(overcast.director.currentScene, overcast.engine.getActiveEvents(), { x: 0, z: 0 });
+  check("visual overcast is complete", !overcast.result.incomplete, overcast.result.incomplete ?? "");
+  check("visual overcast creates a stratiform deck", overcastDecks.some((deck) => deck.kind === "stratocumulus"), `decks=${overcastDecks.map((deck) => deck.kind).join(",")}`);
+  check("visual overcast has no events or local rain", overcast.engine.activeEventCount === 0 && overcast.engine.sampleObserver().precipitation < 0.01, `events=${overcast.engine.activeEventCount} precip=${overcast.engine.sampleObserver().precipitation.toFixed(3)}`);
+  step(overcast, 6);
+  check("visual overcast stays dry after runtime ticks", overcast.engine.sampleObserver().precipitation < 0.01, `precip=${overcast.engine.sampleObserver().precipitation.toFixed(3)}`);
 
   const rain = runVisualLab("rain_front");
+  const rainLocal = rain.engine.sampleObserver();
+  const rainDecks = resolveStratiformLayerSpecs(rain.director.currentScene, rain.engine.getActiveEvents(), { x: 0, z: 0 });
   check("visual rain_front creates one rain band", rain.engine.getActiveEvents().length === 1 && rain.engine.getActiveEvents()[0].type === "rain_band");
   check("visual rain_front creates no storm cell", visualLabStormCellCount(rain.engine) === 0, `storms=${visualLabStormCellCount(rain.engine)}`);
   check("visual rain_front has no lightning event", rain.engine.getActiveEvents().every((event) => !event.producesLightning));
+  check("visual rain_front has a rain-band nimbostratus deck", rainDecks.some((deck) => deck.kind === "nimbostratus" && deck.source === "rain_band"), `decks=${rainDecks.map((deck) => `${deck.kind}:${deck.source}`).join(",")}`);
+  check("visual rain_front does not force local rain before arrival", rainLocal.precipitation < 0.03 && rain.director.currentScene.precipitation.kind === PrecipitationKind.NONE, `precip=${rainLocal.precipitation.toFixed(3)} scene=${rain.director.currentScene.precipitation.kind}`);
+  step(rain, 6);
+  check("visual rain_front stays dry while front is distant", rain.engine.sampleObserver().precipitation < 0.03, `precip=${rain.engine.sampleObserver().precipitation.toFixed(3)}`);
 
   const cumulus = runVisualLab("fair_cumulus");
+  const cumulusDecks = resolveStratiformLayerSpecs(cumulus.director.currentScene, cumulus.engine.getActiveEvents(), { x: 0, z: 0 });
   check("visual fair_cumulus creates 3-6 masses", cumulus.convectiveClouds.masses.length >= 3 && cumulus.convectiveClouds.masses.length <= 6, `masses=${cumulus.convectiveClouds.masses.length}`);
   check("visual fair_cumulus masses are non-precipitating", cumulus.convectiveClouds.masses.every((mass) => mass.precipitationRate <= 0.001 && mass.stormVisual.precip === "none"));
   check("visual fair_cumulus creates no storm event", visualLabStormCellCount(cumulus.engine) === 0);
+  check("visual fair_cumulus has no stratiform deck", cumulusDecks.length === 0, `decks=${cumulusDecks.map((deck) => deck.kind).join(",")}`);
 
   const snow = runVisualLab("snow_squall");
   const snowLocal = snow.engine.sampleObserver();

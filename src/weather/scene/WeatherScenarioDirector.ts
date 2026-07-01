@@ -485,8 +485,12 @@ export class WeatherScenarioDirector {
         // Variation spatiale douce : trouées bleues, couvert non parfait.
         const variation = (hash01(cell.cellX, cell.cellZ) - 0.5) * 0.1;
         const cover = clamp01(e.cloudCover + variation * (e.cloudCover < 0.9 ? 1 : 0.3));
-        const humid = clamp01(e.humidity + variation * 0.6);
+        let humid = clamp01(e.humidity + variation * 0.6);
         const instab = clamp01(e.instability + variation * 0.4);
+
+        if (this.precipitationOverride?.kind === PrecipitationKind.NONE && this.precipitationOverride.intensity <= 0) {
+          humid = Math.min(humid, cover > 0.78 ? 0.58 : 0.6);
+        }
 
         cell.baseline.cloudCover = cover;
         cell.baseline.humidity = humid;

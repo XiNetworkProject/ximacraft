@@ -12,6 +12,14 @@ import { deriveCloudLayerState } from "../weather/sky/CloudLayerState";
 import { CloudLayerType, WeatherSceneState } from "../weather/scene/WeatherScene";
 import { VisibilityController } from "../weather/visibility/VisibilityController";
 
+export interface SkyStratiformAtmosphere {
+  kind: "stratus" | "stratocumulus" | "altostratus" | "nimbostratus";
+  coverage: number;
+  opacity: number;
+  distance: number;
+  overhead: boolean;
+}
+
 export class SkySystem {
   readonly clouds: CloudRenderer;
   /** Échantillon du moteur météo régional sous le joueur (injecté par Game). */
@@ -28,6 +36,7 @@ export class SkySystem {
   private readonly moon: THREE.Sprite;
   private readonly visibilityController = new VisibilityController();
   private cloudShadeTime = 0;
+  private stratiformAtmosphere: SkyStratiformAtmosphere | null = null;
 
   constructor(private readonly renderer: Renderer) {
     this.skyDome = this.createSkyDome();
@@ -36,6 +45,10 @@ export class SkySystem {
     this.moon = this.createDisc(0xd9e7ff, 48);
     this.renderer.scene.add(this.skyDome, this.stars, this.sun, this.moon);
     this.clouds = new CloudRenderer(this.renderer.scene);
+  }
+
+  setStratiformAtmosphere(state: SkyStratiformAtmosphere | null): void {
+    this.stratiformAtmosphere = state;
   }
 
   updateWithWorld(delta: number, time: Time, weather: WeatherSystem, player: Player, world: World): number {
@@ -82,6 +95,17 @@ export class SkySystem {
       midCover * 0.92,
       lowCover,
     );
+    const stratiformVisual = this.stratiformAtmosphere;
+    const stratiformInfluence = stratiformVisual
+      ? clamp(
+          stratiformVisual.coverage
+          * stratiformVisual.opacity
+          * (stratiformVisual.overhead ? 1 : 1 - this.smooth01(stratiformVisual.distance / 3600)),
+          0,
+          1,
+        )
+      : 0;
+    const effectiveCover = Math.max(totalCover, stratiformInfluence);
     const sunDir = new THREE.Vector3(Math.cos(angle) * 280, sunHeight * 280, -120);
     const sunDirNormalized = sunDir.clone().normalize();
     this.cloudShadeTime += delta;
@@ -115,9 +139,25 @@ export class SkySystem {
     horizon.lerp(precipitationHaze, precipitation * (frozenPrecipitation ? 0.6 : 0.72));
     top.lerp(precipitationHaze, precipitation * (frozenPrecipitation ? 0.4 : 0.55));
 
+    if (stratiformInfluence > 0.02 && stratiformVisual) {
+      const heavy = stratiformVisual.kind === "nimbostratus" ? 1 : 0;
+      const midVeil = stratiformVisual.kind === "altostratus" ? 1 : 0;
+      const overcastTop = new THREE.Color(0x7f909c)
+        .lerp(new THREE.Color(0x56616d), heavy * 0.75)
+        .lerp(new THREE.Color(0x9facb5), midVeil * 0.38);
+      const overcastHorizon = new THREE.Color(0xb4bec6)
+        .lerp(new THREE.Color(0x73808c), heavy * 0.7)
+        .lerp(new THREE.Color(0xc5cbd0), midVeil * 0.34);
+      const nightDeck = new THREE.Color(0x141b25);
+      const nightHazeDeck = new THREE.Color(0x1e2732);
+      top.lerp(nightDeck.clone().lerp(overcastTop, dayFactor), stratiformInfluence * (heavy ? 0.82 : 0.66));
+      horizon.lerp(nightHazeDeck.clone().lerp(overcastHorizon, dayFactor), stratiformInfluence * (heavy ? 0.9 : 0.72));
+    }
+
     const legacyVisibilityLoss = Math.max(
       Math.pow(1 - visuals.visibility, 1.2),
       precipitation * (frozenPrecipitation ? 0.9 : 0.72),
+      stratiformInfluence * (stratiformVisual?.kind === "nimbostratus" ? 0.34 : 0.18),
     );
     const resolvedVisibility = sceneState
       ? this.visibilityController.resolve(sceneState, legacyVisibilityLoss)
@@ -142,10 +182,10 @@ export class SkySystem {
       cameraPosition,
       sunDirNormalized,
       sample,
-      lowCover,
+      Math.max(lowCover, stratiformInfluence * (stratiformVisual?.kind === "altostratus" ? 0.35 : 1)),
       midCover,
       highCover,
-      totalCover,
+      effectiveCover,
       visuals.stormDarkening,
       precipitation,
     );
@@ -161,10 +201,10 @@ export class SkySystem {
     // hémisphère) sert de remplissage doux dans les zones d'ombre. Remplissage
     // remonté pour que le monde ne soit jamais écrasé en noir, avec une nuit
     // lunaire bleutée (jamais totalement noire). Les nuages adoucissent le soleil.
-    this.renderer.ambientLight.intensity = lerp(0.3, 1.02, dayFactor) * (1 - visuals.stormDarkening * 0.28) + dayFactor * totalCover * 0.08 + visuals.lightningFlash * 0.34;
+    this.renderer.ambientLight.intensity = lerp(0.3, 1.02, dayFactor) * (1 - visuals.stormDarkening * 0.28) + dayFactor * effectiveCover * 0.08 + visuals.lightningFlash * 0.34;
     this.renderer.hemisphereLight.intensity = lerp(0.5, 1.78, dayFactor) * (1 - visuals.stormDarkening * 0.34) * (1 - sunOcclusion * 0.08);
-    this.renderer.sunLight.intensity = lerp(0.04, 4.15, dayFactor) * (1 - visuals.stormDarkening * 0.58) * (1 - totalCover * 0.16) * sunVisibility + visuals.lightningFlash * 0.72;
-    this.renderer.moonLight.intensity = lerp(0.42, 0.02, dayFactor) * (1 - totalCover * 0.45);
+    this.renderer.sunLight.intensity = lerp(0.04, 4.15, dayFactor) * (1 - visuals.stormDarkening * 0.58) * (1 - effectiveCover * 0.16) * sunVisibility + visuals.lightningFlash * 0.72;
+    this.renderer.moonLight.intensity = lerp(0.42, 0.02, dayFactor) * (1 - effectiveCover * 0.45);
 
     // La caméra d'ombre suit le joueur (sinon les ombres restent figées près de
     // l'origine du monde). La direction joueur→soleil = sunDir normalisé.
@@ -178,28 +218,28 @@ export class SkySystem {
       .setHex(0xfff4dc)
       .lerp(new THREE.Color(0xff9a45), dawnFactor * 0.85);
     const sunGlowStrength =
-      (dayFactor * 0.96 + dawnFactor * 0.58) * (1 - totalCover * 0.42) * (1 - visuals.stormDarkening * 0.55) * sunVisibility;
+      (dayFactor * 0.96 + dawnFactor * 0.58) * (1 - effectiveCover * 0.42) * (1 - visuals.stormDarkening * 0.55) * sunVisibility;
     skyMaterial.uniforms.sunGlowStrength.value = sunGlowStrength;
     // Alimente les god rays (post-traitement) : direction + intensité du soleil.
     this.renderer.setPostSun(this.sunDirection, Math.max(0, sunGlowStrength));
     this.sun.position.copy(cameraPosition).add(sunDir);
-    this.sun.material.opacity = clamp(dayFactor * 1.35 - totalCover * 0.62 - sunOcclusion * 0.92, 0, 1);
+    this.sun.material.opacity = clamp(dayFactor * 1.35 - effectiveCover * 0.62 - sunOcclusion * 0.92, 0, 1);
     this.sun.scale.setScalar(22);
 
     const moonDir = sunDir.clone().multiplyScalar(-1);
     this.renderer.moonLight.position.copy(moonDir);
     this.moon.position.copy(cameraPosition).add(moonDir);
-    this.moon.material.opacity = clamp((1 - dayFactor) * 1.12 - totalCover * 0.62, 0, 1);
+    this.moon.material.opacity = clamp((1 - dayFactor) * 1.12 - effectiveCover * 0.62, 0, 1);
     this.moon.scale.setScalar(20);
     // Halo de lune dans le ciel : seulement la nuit, quand la lune est levée.
     const moonDirN = moonDir.clone().normalize();
     skyMaterial.uniforms.moonDirection.value.copy(moonDirN);
     skyMaterial.uniforms.moonGlowStrength.value =
-      Math.max(0, 1 - dayFactor) * Math.max(0, moonDirN.y) * (1 - totalCover * 0.6);
+      Math.max(0, 1 - dayFactor) * Math.max(0, moonDirN.y) * (1 - effectiveCover * 0.6);
 
     this.starTime += delta;
     this.starsMaterial.uniforms.uTime.value = this.starTime;
-    this.starsMaterial.uniforms.uOpacity.value = clamp(Math.pow(1 - dayFactor, 1.35) * (1 - totalCover * 0.88), 0, 1);
+    this.starsMaterial.uniforms.uOpacity.value = clamp(Math.pow(1 - dayFactor, 1.35) * (1 - effectiveCover * 0.88), 0, 1);
 
     this.clouds.update(delta, {
       cameraPosition,

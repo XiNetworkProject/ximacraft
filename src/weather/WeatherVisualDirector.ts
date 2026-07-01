@@ -1,4 +1,5 @@
 import type { WeatherVisualLabResult } from "./WeatherVisualLab";
+import type { StratiformCloudDebugState } from "../render/weather/StratiformCloudRenderer";
 
 export type WeatherVisualMode = "new" | "legacy";
 
@@ -7,8 +8,13 @@ export interface ToggleableRenderer {
   isEnabled(): boolean;
 }
 
+export interface StratiformCloudTarget extends ToggleableRenderer {
+  debugState(): StratiformCloudDebugState;
+}
+
 export interface WeatherVisualTargets {
   stratiformDome: ToggleableRenderer;
+  stratiformClouds?: StratiformCloudTarget;
   cloudSprites: ToggleableRenderer;
   distantPrecipitation?: ToggleableRenderer;
 }
@@ -52,6 +58,7 @@ export interface WeatherVisualLabMetrics {
   snowDepth?: number;
   precipitationRenderer?: { rain: boolean; flakes: boolean; drawCount: number; opacity: number };
   rainCurtains?: { enabled: boolean; visible: boolean; drawCount: number };
+  stratiformClouds?: StratiformCloudDebugState;
 }
 
 export class WeatherVisualDirector {
@@ -108,10 +115,10 @@ export class WeatherVisualDirector {
       },
       {
         phenomenon: "Nuages stratiformes",
-        authority: "Phase 2 manquante; legacy dome seulement en A/B",
-        worldAnchored: false,
-        active: () => this.targets.stratiformDome.isEnabled(),
-        note: "legacy coupe en mode new",
+        authority: "StratiformCloudRenderer",
+        worldAnchored: true,
+        active: () => this.targets.stratiformClouds?.debugState().active ?? false,
+        note: "Phase 2A: couches world-space base/sommet, sans dome fBm",
       },
       {
         phenomenon: "Sprites anciens de cumulus",
@@ -154,6 +161,7 @@ export class WeatherVisualDirector {
   private apply(): void {
     const legacy = this.mode === "legacy";
     this.targets.stratiformDome.setEnabled(legacy);
+    this.targets.stratiformClouds?.setEnabled(!legacy);
     this.targets.cloudSprites.setEnabled(legacy);
     this.targets.distantPrecipitation?.setEnabled(false);
   }
@@ -190,7 +198,7 @@ export class WeatherVisualDirector {
     if (this.mode === "legacy") warnings.push("ATTENTION: renderers legacy actifs.");
     if (result?.incomplete) warnings.push(result.incomplete);
     if (metrics?.rainCurtains?.enabled || metrics?.rainCurtains?.visible) {
-      warnings.push("ATTENTION: RainCurtainRenderer actif alors qu'il doit rester coupe en Phase 1.");
+      warnings.push("ATTENTION: RainCurtainRenderer actif alors qu'il doit rester coupe en Phase 2A.");
     }
 
     rows.push(`<div class="weather-visual-lab-title">Weather Visual Lab</div>`);
@@ -203,6 +211,7 @@ export class WeatherVisualDirector {
     rows.push(this.row("Masses nuageuses", String(metrics?.convectiveMasses ?? 0)));
     rows.push(this.row("Precip joueur", metrics ? `${metrics.sample.precipitation.toFixed(2)} / ${metrics.sample.weatherType}` : "-"));
     rows.push(this.row("Nuages", metrics ? `${Math.round(metrics.sample.cloudCover * 100)}%` : "-"));
+    rows.push(this.row("Stratiforme", this.formatStratiform(metrics?.stratiformClouds)));
     rows.push(this.row("Fog / neige", metrics ? `${(metrics.fogDensity ?? 0).toFixed(2)} / ${(metrics.snowDepth ?? 0).toFixed(2)}` : "-"));
     rows.push(this.row("Renderer precip", metrics?.precipitationRenderer
       ? `rain=${metrics.precipitationRenderer.rain ? "on" : "off"} flakes=${metrics.precipitationRenderer.flakes ? "on" : "off"} draw=${metrics.precipitationRenderer.drawCount}`
@@ -222,6 +231,22 @@ export class WeatherVisualDirector {
 
   private row(label: string, value: string): string {
     return `<div class="weather-visual-lab-row"><span>${escapeHtml(label)}</span><b>${escapeHtml(value)}</b></div>`;
+  }
+
+  private formatStratiform(state: StratiformCloudDebugState | undefined): string {
+    if (!state) return "-";
+    if (!state.enabled) return "renderer off";
+    const nearest = state.nearest;
+    if (!nearest) return "renderer on, aucun deck";
+    const dir = this.directionLabel(nearest.directionX, nearest.directionZ);
+    return `${nearest.kind} base=${Math.round(nearest.baseHeight)} top=${Math.round(nearest.topHeight)} cov=${Math.round(nearest.coverage * 100)}% dist=${Math.round(nearest.distance)}m ${dir} ${nearest.speed.toFixed(1)}b/s`;
+  }
+
+  private directionLabel(x: number, z: number): string {
+    if (Math.hypot(x, z) < 0.01) return "-";
+    const dirs = ["E", "SE", "S", "SW", "W", "NW", "N", "NE"];
+    const angle = Math.atan2(z, x);
+    return dirs[Math.round((angle / (Math.PI * 2)) * 8 + 8) % 8];
   }
 
   private nearestEvent(metrics: WeatherVisualLabMetrics | null): string | null {
