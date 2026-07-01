@@ -28,6 +28,7 @@ export interface WeatherVisualTargets {
 export interface CumulusFieldMetrics {
   enabled: boolean;
   active: boolean;
+  regime: string;
   coverage: number;
   windX: number;
   windZ: number;
@@ -38,6 +39,12 @@ export interface CumulusFieldMetrics {
   near: number;
   mid: number;
   horizon: number;
+  blueSkyFraction: number;
+  spacing: number;
+  dominant: boolean;
+  largestRadius: number;
+  largestMaturity: number;
+  legacyMasses: number;
   seed: number;
   tileX: number;
   tileZ: number;
@@ -249,12 +256,24 @@ export class WeatherVisualDirector {
     const cumulus = metrics?.cumulusField;
     rows.push(this.row("Cumulus field", cumulus ? (cumulus.enabled ? (cumulus.active ? "ON" : "on (idle)") : "OFF") : "-"));
     if (cumulus && cumulus.enabled) {
+      rows.push(this.row("Cumulus regime", cumulus.regime));
+      rows.push(this.row("Cumulus authority", "CumulusFieldRenderer only"));
+      rows.push(this.row("Legacy cumulus renderers", "OFF"));
+      rows.push(this.row("Convective renderer", cumulus.active ? "inactive" : "active"));
+      rows.push(this.row("Legacy visible masses", String(cumulus.legacyMasses)));
+      rows.push(this.row("Blue-sky fraction", `${Math.round(cumulus.blueSkyFraction * 100)}%`));
+      rows.push(this.row("Cloud spacing", `${Math.round(cumulus.spacing)}m`));
+      rows.push(this.row("Dominant formation", cumulus.dominant ? "ON" : "OFF"));
+      rows.push(this.row("Largest cloud radius/mat", `${Math.round(cumulus.largestRadius)}m / ${cumulus.largestMaturity.toFixed(2)}`));
       rows.push(this.row("Cumulus couv/vent", `${Math.round(cumulus.coverage * 100)}% / ${this.directionLabel(cumulus.windX, cumulus.windZ)} ${Math.hypot(cumulus.windX, cumulus.windZ).toFixed(1)}b/s`));
       rows.push(this.row("Cumulus formations", `${cumulus.formations} (vis ${cumulus.visible})`));
       rows.push(this.row("Cumulus LOD proche/inter/horizon", `${cumulus.near}/${cumulus.mid}/${cumulus.horizon}`));
       rows.push(this.row("Cumulus tuiles actives", `${cumulus.activeTiles}/${cumulus.scannedCells}`));
       rows.push(this.row("Cumulus tuile / seed", `(${cumulus.tileX},${cumulus.tileZ}) seed=${cumulus.seed}`));
       rows.push(this.row("Cumulus distance stream", `${Math.round(cumulus.streamRadius)}m`));
+      if (cumulus.active && cumulus.legacyMasses > 0) {
+        warnings.push(`ATTENTION: ${cumulus.legacyMasses} cumulus legacy actifs pendant le champ fair-weather.`);
+      }
     }
     rows.push(this.row("Fog / neige", metrics ? `${(metrics.fogDensity ?? 0).toFixed(2)} / ${(metrics.snowDepth ?? 0).toFixed(2)}` : "-"));
     rows.push(this.row("Renderer precip", metrics?.precipitationRenderer

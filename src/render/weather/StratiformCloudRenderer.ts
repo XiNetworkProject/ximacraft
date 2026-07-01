@@ -225,6 +225,8 @@ export class StratiformCloudRenderer {
       uniforms.uDetailFreq.value = kindParams.detailFreq;
       uniforms.uExtinction.value = kindParams.extinction;
       uniforms.uMaxAlpha.value = kindParams.maxAlpha;
+      // Rain band = front progressif (voile -> nimbostratus) le long de l'axe de déplacement.
+      uniforms.uFrontTaper.value = spec.source === "rain_band" ? 1 : 0;
       slot.mesh.visible = true;
     }
 
@@ -484,6 +486,7 @@ function createStratiformMaterial(noise: ReturnType<typeof getStratiformNoiseTex
     uDetailFreq: { value: 0.0016 },
     uExtinction: { value: 0.7 },
     uMaxAlpha: { value: 0.9 },
+    uFrontTaper: { value: 0 },
   };
   if (noise) {
     uniforms.uShapeNoise = { value: noise.shape };
@@ -514,7 +517,7 @@ function createStratiformMaterial(noise: ReturnType<typeof getStratiformNoiseTex
 
       uniform float uTime, uKind, uCoverage, uOpacity, uSeed, uDayFactor;
       uniform float uStepCount, uLightSteps, uDetailStrength;
-      uniform float uShapeFreq, uDetailFreq, uExtinction, uMaxAlpha;
+      uniform float uShapeFreq, uDetailFreq, uExtinction, uMaxAlpha, uFrontTaper;
       uniform vec2 uWind;
       uniform vec3 uCameraLocal, uCameraWorld, uSunDir, uSunLocal;
       uniform mat4 uLocalToWorld;
@@ -701,6 +704,13 @@ function createStratiformMaterial(noise: ReturnType<typeof getStratiformNoiseTex
           vec3 wp = (uLocalToWorld * vec4(p, 1.0)).xyz;
           float h = p.y * 0.5 + 0.5;
           float d = densityField(p, wp, h);
+          // Fondu horizontal doux vers les bords de la boîte : aucune face/mur
+          // latéral visible. Le deck se dissout dans le ciel (SkySystem gris).
+          d *= 1.0 - smoothstep(0.68, 0.99, max(abs(p.x), abs(p.z)));
+          // Front pluvieux progressif : bord d'attaque fin (voile) -> coeur dense.
+          if (uFrontTaper > 0.5) {
+            d *= mix(0.1, 1.0, smoothstep(1.0, -0.35, p.z));
+          }
           if (d > 0.002) {
             // Light-march court vers le soleil → Beer-Lambert sur l'épaisseur réelle.
             float lightDepth = 0.0;

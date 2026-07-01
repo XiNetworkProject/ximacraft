@@ -27,6 +27,7 @@ export class RegionalCloudController {
   private readonly volumes = new Map<string, CloudMass>();
   private scanTimer = 0;
   private growthPulse = 0;
+  private ambientSuppressed = false;
 
   constructor(
     private readonly engine: WeatherEngine,
@@ -38,6 +39,21 @@ export class RegionalCloudController {
     this.volumes.clear();
     this.scanTimer = 0;
     this.growthPulse = 0;
+  }
+
+  /**
+   * Coupe le peuplement de cumulus AMBIANTS (convectifs) : utilisé quand le champ
+   * de cumulus de beau temps (FairWeatherCumulusField) est l'autorité visuelle.
+   * Les orages (événements météo) ne passent PAS par ce peuplement, donc ils
+   * restent intacts. Les volumes ambiants existants se dissipent en douceur.
+   */
+  setAmbientSuppressed(suppressed: boolean): void {
+    this.ambientSuppressed = suppressed;
+  }
+
+  /** Nombre de volumes ambiants (cumulus) actuellement matérialisés. */
+  get ambientVolumeCount(): number {
+    return this.volumes.size;
   }
 
   /** Full persistent population for the cheap horizon/mid-field renderer. */
@@ -85,6 +101,14 @@ export class RegionalCloudController {
     this.syncVolumes(dt, observerX, observerZ);
 
     if (this.growthPulse >= 4.5) this.growthPulse = 0;
+    if (this.ambientSuppressed) {
+      // Champ fair-weather = autorité : on dissipe en douceur les cumulus
+      // ambiants et on n'en assigne plus (pas de blob parasite).
+      for (const mass of this.volumes.values()) {
+        if (!mass.dead && mass.lifecycle !== "DISSIPATING" && mass.lifecycle !== "DISSIPATED") mass.dissipate();
+      }
+      return;
+    }
     if (this.scanTimer <= 0) {
       this.scanTimer = SCAN_INTERVAL;
       this.assignVolumes(observerX, observerZ);

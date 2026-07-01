@@ -40,6 +40,8 @@ import { FogLodSystem } from "../src/render/weather/fog/FogLodSystem";
 import { resolveStratiformLayerSpecs, StratiformCloudRenderer } from "../src/render/weather/StratiformCloudRenderer";
 import { FairWeatherCumulusField, deriveCumulusFieldWeather } from "../src/clouds/FairWeatherCumulusField";
 import { CumulusFieldRenderer } from "../src/render/weather/CumulusFieldRenderer";
+import { RegionalCloudController } from "../src/clouds/RegionalCloudController";
+import { paintWeatherLabCells } from "../src/weather/WeatherVisualLab";
 import { EntityAssetManager } from "../src/living/EntityAssetManager";
 import { EntityAnimationController } from "../src/living/EntityAnimationController";
 import { SpatialAudioMixer } from "../src/assets/SpatialAudioMixer";
@@ -365,6 +367,102 @@ console.log("\n[cumulus] world-space fair-weather field: activation, determinism
   cumulusRenderer.update({ formations: [], camera, sunDirection: sun, dayFactor: 1, time: 5, windX: 0, windZ: 0, quality: "balanced", delta: 1 });
   check("cumulus renderer clears slots when the field is empty", cumulusRenderer.debug().visible === 0, `vis=${cumulusRenderer.debug().visible}`);
   cumulusRenderer.dispose();
+}
+
+// ============================================================================
+console.log("\n[cumulus authority] fair-weather suppresses legacy convective cumulus");
+{
+  const engine = new WeatherEngine();
+  engine.setObserver(0, 0);
+  paintWeatherLabCells(engine, { cloudCover: 0.62, humidity: 0.85, instability: 0.42, temperature: 20, pressure: 1014, windX: 2, windZ: 0, radiusCells: 10 });
+  const sun = new THREE.Vector3(0, 1, 0);
+
+  // Sans suppression : le peuplement PEUT matérialiser des cumulus ambiants.
+  const cloudsA = new ConvectiveCloudSystem();
+  const rcA = new RegionalCloudController(engine, cloudsA);
+  for (let t = 0; t < 60; t += 0.5) { rcA.update(0.5, 0, 0); cloudsA.update(0.5, { dayFactor: 1, sunDir: sun }); }
+
+  // Avec suppression dès le départ : aucun cumulus ambiant (le champ est l'autorité).
+  const cloudsB = new ConvectiveCloudSystem();
+  const rcB = new RegionalCloudController(engine, cloudsB);
+  rcB.setAmbientSuppressed(true);
+  for (let t = 0; t < 60; t += 0.5) { rcB.update(0.5, 0, 0); cloudsB.update(0.5, { dayFactor: 1, sunDir: sun }); }
+
+  check("ambient suppression keeps convective cumulus at zero", rcB.ambientVolumeCount === 0, `count=${rcB.ambientVolumeCount}`);
+  check("suppressed controller never exceeds unsuppressed ambient count", rcB.ambientVolumeCount <= rcA.ambientVolumeCount, `sup=${rcB.ambientVolumeCount} unsup=${rcA.ambientVolumeCount}`);
+}
+
+// ============================================================================
+console.log("\n[cumulus regimes] deterministic fair-weather sub-profiles");
+{
+  const w = (coverage: number, humidity: number) => ({ active: true, coverage, humidity, windX: 2, windZ: 0, time: 10 });
+  const field = new FairWeatherCumulusField();
+  field.setSeed("regime-seed");
+  const countRegime = (regime: Parameters<FairWeatherCumulusField["setRegime"]>[0]) => {
+    field.setRegime(regime);
+    field.update(0, 0, w(0.5, 0.6), "high");
+    return field.formations.length;
+  };
+  const clearN = countRegime("crystal_clear");
+  const sparseN = countRegime("sparse_fair_cumulus");
+  const classicN = countRegime("classic_fair_cumulus");
+  const brokenN = countRegime("broken_fair_weather");
+  check("crystal_clear yields almost no clouds", clearN <= 4, `n=${clearN}`);
+  check("regimes scale coverage: clear < sparse < classic", clearN < sparseN && sparseN < classicN, `clear=${clearN} sparse=${sparseN} classic=${classicN}`);
+  check("broken fair weather is richly populated", brokenN > sparseN, `broken=${brokenN} sparse=${sparseN}`);
+
+  field.setRegime("crystal_clear"); field.update(0, 0, w(0.5, 0.6), "high");
+  const clearBlue = field.debug().blueSkyFraction;
+  field.setRegime("classic_fair_cumulus"); field.update(0, 0, w(0.5, 0.6), "high");
+  const classicBlue = field.debug().blueSkyFraction;
+  check("blue-sky fraction is higher for clearer regimes", clearBlue > classicBlue, `clear=${clearBlue.toFixed(2)} classic=${classicBlue.toFixed(2)}`);
+
+  field.setRegime("sparse_fair_cumulus"); field.update(0, 0, w(0.5, 0.6), "high");
+  const sparseSpacing = field.debug().spacing;
+  field.setRegime("classic_fair_cumulus"); field.update(0, 0, w(0.5, 0.6), "high");
+  const classicSpacing = field.debug().spacing;
+  check("sparse regime spaces clouds further than classic", sparseSpacing > classicSpacing, `sparse=${sparseSpacing} classic=${classicSpacing}`);
+
+  const fa = new FairWeatherCumulusField(); fa.setSeed("rd"); fa.setRegime("classic_fair_cumulus"); fa.update(500, -700, w(0.5, 0.6), "balanced");
+  const fb = new FairWeatherCumulusField(); fb.setSeed("rd"); fb.setRegime("classic_fair_cumulus"); fb.update(500, -700, w(0.5, 0.6), "balanced");
+  const sg = (f: FairWeatherCumulusField) => f.formations.map((c) => `${c.id}:${Math.round(c.radius)}:${c.dominant}`).join("|");
+  check("regimes are deterministic for same seed/args", sg(fa) === sg(fb) && fa.formations.length > 0);
+
+  // Régime dominant : une formation nettement plus grande, minoritaire.
+  const dom = new FairWeatherCumulusField(); dom.setSeed("dominant-day"); dom.setRegime("dominant_cumulus_day");
+  dom.update(0, 0, w(0.42, 0.56), "high");
+  const forms = dom.formations;
+  const dominants = forms.filter((f) => f.dominant);
+  const others = forms.filter((f) => !f.dominant).map((f) => f.radius).sort((a, b) => a - b);
+  const median = others.length ? others[Math.floor(others.length / 2)] : 0;
+  check("dominant regime creates at least one dominant formation", dominants.length >= 1 && dom.debug().dominant, `dominants=${dominants.length}`);
+  check("dominant formation is significantly larger than the rest", dominants.length > 0 && median > 0 && dominants[0].radius > median * 1.8, `dom=${Math.round(dominants[0]?.radius ?? 0)} median=${Math.round(median)}`);
+  check("dominant formations stay a minority", dominants.length <= Math.max(2, Math.ceil(forms.length * 0.35)), `dominants=${dominants.length}/${forms.length}`);
+}
+
+// ============================================================================
+console.log("\n[continuity] overcast/rain decks are broad, soft, world-space (no visible box)");
+{
+  const overcast = runVisualLab("overcast");
+  const overcastDeck = resolveStratiformLayerSpecs(overcast.director.currentScene, overcast.engine.getActiveEvents(), { x: 0, z: 0 }).find((d) => d.source === "scene");
+  check("overcast deck is a broad world-space layer (not a small box)", !!overcastDeck && overcastDeck.width >= 9000 && overcastDeck.depth >= 9000, `w=${overcastDeck?.width} d=${overcastDeck?.depth}`);
+  // Le champ cumulus reste OFF sous overcast/rain (déjà couvert), et le deck
+  // fournit un état atmosphère overhead pour le prolongement SkySystem.
+  const scene = new THREE.Scene();
+  const strat = new StratiformCloudRenderer(scene);
+  const cam = new THREE.PerspectiveCamera(70, 1, 0.1, 3000);
+  cam.position.set(0, 70, 0);
+  for (let i = 0; i < 3; i += 1) {
+    strat.update({ scene: overcast.director.currentScene, events: overcast.engine.getActiveEvents(), camera: cam, observerX: 0, observerZ: 0, dayFactor: 1, sunDirection: new THREE.Vector3(0.3, 0.9, -0.2), time: i, quality: "balanced", delta: 0.5 });
+  }
+  const atmo = strat.atmosphereState();
+  check("overcast feeds SkySystem an overhead grey atmosphere (horizon continuity)", !!atmo && atmo.overhead && atmo.coverage > 0.4, `atmo=${JSON.stringify(atmo)}`);
+  strat.dispose();
+
+  const rain = runVisualLab("rain_front");
+  const rainDeck = resolveStratiformLayerSpecs(rain.director.currentScene, rain.engine.getActiveEvents(), { x: 0, z: 0 }).find((d) => d.source === "rain_band");
+  check("rain front is a broad soft band, wider than deep (progressive, no wall)", !!rainDeck && rainDeck.width > rainDeck.depth && rainDeck.width >= 5000, `w=${rainDeck?.width} d=${rainDeck?.depth}`);
+  check("rain front params stay in smooth [0,1] range (no logical hard edge)", !!rainDeck && rainDeck.coverage > 0.5 && rainDeck.coverage <= 1 && rainDeck.opacity > 0.5 && rainDeck.opacity <= 1);
 }
 
 // ============================================================================

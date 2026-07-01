@@ -1,4 +1,5 @@
 import { ConvectiveCloudSystem } from "../clouds/ConvectiveCloudSystem";
+import type { CumulusRegimeName } from "../clouds/FairWeatherCumulusField";
 import { GroundAccumulationSystem } from "./ground/GroundAccumulationSystem";
 import { SurfaceWeatherState } from "./ground/SurfaceWeatherState";
 import { WeatherEngine } from "./WeatherEngine";
@@ -10,6 +11,12 @@ import { WeatherScenarioDirector } from "./scene/WeatherScenarioDirector";
 export type WeatherVisualScenarioName =
   | "clear"
   | "fair_cumulus"
+  | "cumulus_clear"
+  | "cumulus_sparse"
+  | "cumulus_classic"
+  | "cumulus_broken"
+  | "cumulus_dominant"
+  | "cumulus_humid"
   | "overcast"
   | "rain_front"
   | "valley_fog"
@@ -19,6 +26,12 @@ export type WeatherVisualScenarioName =
 export const WEATHER_VISUAL_SCENARIOS: readonly WeatherVisualScenarioName[] = [
   "clear",
   "fair_cumulus",
+  "cumulus_clear",
+  "cumulus_sparse",
+  "cumulus_classic",
+  "cumulus_broken",
+  "cumulus_dominant",
+  "cumulus_humid",
   "overcast",
   "rain_front",
   "valley_fog",
@@ -45,7 +58,7 @@ export interface WeatherVisualLabTargets {
   surfaceState?: SurfaceWeatherState;
   radarHistory?: { reset(): void };
   lightning?: { reset(): void };
-  cumulusField?: { reset(): void };
+  cumulusField?: { reset(): void; setRegime(regime: CumulusRegimeName | null): void };
   rainCurtains?: { setEnabled(enabled: boolean): void; clear(): void };
   setTime?: (name: string) => void;
   setLegacyWeather?: (type: string, duration?: number, intensity?: number) => void;
@@ -75,6 +88,7 @@ export function resetWeatherVisualLabState(targets: WeatherVisualLabTargets): vo
   targets.resetCloudVisuals?.();
   targets.convectiveClouds.clear();
   targets.cumulusField?.reset();
+  targets.cumulusField?.setRegime(null);
   targets.groundSystem?.clearOverride();
   targets.surfaceState?.clear();
   targets.radarHistory?.reset();
@@ -146,6 +160,30 @@ export function startWeatherVisualLabScenario(
         warnings: [RAIN_CURTAINS_WARNING],
       };
     }
+
+    case "cumulus_clear":
+      activateCumulusRegime(targets, "crystal_clear", SkyState.FAIR_WEATHER_CUMULUS, { cloudCover: 0.14, humidity: 0.4 });
+      return cumulusRegimeResult(scenario, "Ciel presque dégagé (rares humilis)", "Presque aucun nuage, quelques humilis très espacés, tout sec.");
+
+    case "cumulus_sparse":
+      activateCumulusRegime(targets, "sparse_fair_cumulus", SkyState.FAIR_WEATHER_CUMULUS, { cloudCover: 0.26, humidity: 0.5 });
+      return cumulusRegimeResult(scenario, "Cumulus épars", "Peu de cumulus, beaucoup de ciel bleu, tout sec.");
+
+    case "cumulus_classic":
+      activateCumulusRegime(targets, "classic_fair_cumulus", SkyState.FAIR_WEATHER_CUMULUS, { cloudCover: 0.34, humidity: 0.54 });
+      return cumulusRegimeResult(scenario, "Cumulus de beau temps classiques", "Ciel classique varié et équilibré, du proche à l'horizon, tout sec.");
+
+    case "cumulus_broken":
+      activateCumulusRegime(targets, "broken_fair_weather", SkyState.BROKEN_CUMULUS, { cloudCover: 0.55, humidity: 0.6 });
+      return cumulusRegimeResult(scenario, "Beau temps fragmenté", "Beaucoup de masses avec de grandes clairières bleues, tout sec.");
+
+    case "cumulus_dominant":
+      activateCumulusRegime(targets, "dominant_cumulus_day", SkyState.FAIR_WEATHER_CUMULUS, { cloudCover: 0.32, humidity: 0.56 });
+      return cumulusRegimeResult(scenario, "Journée à formation dominante", "Une ou deux grosses formations principales entourées de petits cumulus, tout sec.");
+
+    case "cumulus_humid":
+      activateCumulusRegime(targets, "humid_summer_cumulus", SkyState.SCATTERED_CUMULUS, { cloudCover: 0.5, humidity: 0.82 });
+      return cumulusRegimeResult(scenario, "Cumulus d'été humide", "Cumulus plus gros, plus verticaux et lumineux, mais jamais cumulonimbus ni pluie.");
 
     case "overcast":
       targets.setTime?.("noon");
@@ -287,6 +325,44 @@ export function startWeatherVisualLabScenario(
       };
     }
   }
+}
+
+function activateCumulusRegime(
+  targets: WeatherVisualLabTargets,
+  regime: CumulusRegimeName,
+  sky: SkyState,
+  opts: { cloudCover: number; humidity: number; windX?: number; windZ?: number; temperature?: number },
+): void {
+  targets.setTime?.("day");
+  targets.scenarios.hold(SynopticRegime.HUMID_HIGH_PRESSURE, 900);
+  targets.scenarios.forceSky(sky, 900, "none");
+  targets.scenarios.forcePrecipitation(PrecipitationKind.NONE, 0, 900, "none", false);
+  paintWeatherLabCells(targets.engine, {
+    cloudCover: opts.cloudCover,
+    humidity: opts.humidity,
+    instability: 0.12,
+    temperature: opts.temperature ?? 18,
+    pressure: 1016,
+    windX: opts.windX ?? 4,
+    windZ: opts.windZ ?? 1.2,
+    radiusCells: 10,
+  });
+  targets.cumulusField?.setRegime(regime);
+}
+
+function cumulusRegimeResult(
+  scenario: WeatherVisualScenarioName,
+  label: string,
+  expected: string,
+): WeatherVisualLabResult {
+  return {
+    scenario,
+    label,
+    forcedTime: "day",
+    expected,
+    renderers: ["FairWeatherCumulusField", "CumulusFieldRenderer", "SkySystem"],
+    warnings: [RAIN_CURTAINS_WARNING],
+  };
 }
 
 export function paintWeatherLabCells(engine: WeatherEngine, options: PaintOptions): void {

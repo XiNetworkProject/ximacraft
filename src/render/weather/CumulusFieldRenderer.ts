@@ -390,45 +390,66 @@ function createCumulusMaterial(noise: ReturnType<typeof getStratiformNoiseTextur
         return saturate(d);
       }
 
+      float remap01(float v, float lo, float hi) { return clamp((v - lo) / max(hi - lo, 1e-4), 0.0, 1.0); }
+
       #ifdef HAS_NOISE3D
-      float shapeNoise(vec3 air) { return texture(uShapeNoise, air * uShapeFreq + uSeed * 0.11).r; }
+      vec4 shapeTex(vec3 air) { return texture(uShapeNoise, air * uShapeFreq + uSeed * 0.11); }
+      float shapeNoise(vec3 air) { return shapeTex(air).r; }
+      float mediumNoise(vec3 air) { return texture(uShapeNoise, air * (uShapeFreq * 2.3) + vec3(3.7, 1.9, 5.1)).r; }
       float detailNoise(vec3 air) { return dot(texture(uDetailNoise, air * uDetailFreq).rgb, vec3(0.62, 0.28, 0.1)); }
+      vec3 shapeWarp(vec3 air) { vec4 s = shapeTex(air); return vec3(s.g, s.a, s.b) - 0.5; }
       #else
       float hash2(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32 + uSeed); return fract(p.x * p.y); }
       float noise2(vec2 p) {
         vec2 i = floor(p); vec2 f = fract(p); f = f * f * (3.0 - 2.0 * f);
         return mix(mix(hash2(i), hash2(i + vec2(1, 0)), f.x), mix(hash2(i + vec2(0, 1)), hash2(i + vec2(1, 1)), f.x), f.y);
       }
-      float shapeNoise(vec3 air) { return noise2(air.xz * uShapeFreq * 2.4 + air.y * 0.002) * 0.7 + 0.3; }
+      float shapeNoise(vec3 air) { return noise2(air.xz * uShapeFreq * 2.4 + air.y * 0.002) * 0.7 + 0.15; }
+      float mediumNoise(vec3 air) { return noise2(air.xz * uShapeFreq * 5.4 - air.y * 0.003); }
       float detailNoise(vec3 air) { return noise2(air.xz * uDetailFreq * 1.6); }
+      vec3 shapeWarp(vec3 air) { return vec3(noise2(air.xz * uShapeFreq * 1.7) - 0.5, 0.0, noise2(air.zx * uShapeFreq * 1.9) - 0.5); }
       #endif
 
+      // Structure claire : MACRO (lobes) = enveloppe de couverture ; le BRUIT 3D
+      // définit réellement la silhouette (remap couverture) ; MEDIUM creuse
+      // lobes/tours ; FINE érode les bords.
       float cumulusDensity(vec3 p, vec3 wp) {
+        float coverage = lobeField(p);            // macro : les 4 lobes ne sont qu'une base
+        if (coverage <= 0.001) return 0.0;
         float h = p.y * 0.5 + 0.5;
-        float shape = lobeField(p);
-        if (shape <= 0.0) return 0.0;
-        // Base plate (humilis/mediocris), sommet arrondi.
-        float base = smoothstep(0.0, 0.1, h);
-        float top = 1.0 - smoothstep(0.82, 1.03, h);
-        float d = shape * base * top;
-        // Bruit échantillonné en ESPACE DE MASSE D'AIR → colle au nuage (pas de
-        // texture qui glisse) et reste ancré monde.
-        vec3 air = wp - uAirOffset;
-        float billow = shapeNoise(air);
-        d = saturate(d * (0.5 + 0.85 * billow));
+        vec3 air = wp - uAirOffset;               // espace masse d'air : le bruit colle au nuage
+        vec3 warp = shapeWarp(air) * 55.0;        // contours moins ronds
+        float shape = shapeNoise(air + warp);     // billow basse fréquence
+        float medium = mediumNoise(air + warp * 0.6);
+        float baseShape = clamp(shape * 0.62 + medium * 0.38, 0.0, 1.0);
+        // La silhouette suit le bruit, bornée par la couverture macro.
+        float density = remap01(baseShape, 1.0 - coverage, 1.0);
+        density *= mix(0.72, 1.18, medium);       // medium : creux et petites tours
+        // Gradient vertical : base PLATE nette, sommet BOURGEONNANT.
+        float baseWarp = (medium - 0.5) * 0.05;
+        float base = smoothstep(baseWarp, 0.05 + baseWarp, h);
+        float top = 1.0 - smoothstep(0.82, 1.05, h);
+        float bud = mix(1.0, 0.5 + 0.95 * medium, smoothstep(0.45, 1.0, h) * (0.5 + 0.5 * uMaturity));
+        density *= base * top * bud;
+        // Dessous plus irrégulier et un peu creusé.
+        density *= mix(1.0, 0.68 + 0.5 * shape, 1.0 - smoothstep(0.0, 0.22, h));
+        // Fine erosion des contours.
         if (uDetailStrength > 0.001) {
           float det = detailNoise(air);
-          float edge = 1.0 - smoothstep(0.1, 0.62, d);
-          d = saturate(d - (1.0 - det) * edge * uDetailStrength);
+          float edge = 1.0 - smoothstep(0.06, 0.5, density);
+          density = clamp(density - (1.0 - det) * edge * uDetailStrength, 0.0, 1.0);
         }
-        return d * uDensity;
+        return density * uDensity;
       }
 
       float coarseDensity(vec3 p, vec3 wp) {
+        float coverage = lobeField(p);
+        if (coverage <= 0.001) return 0.0;
         float h = p.y * 0.5 + 0.5;
-        float shape = lobeField(p);
-        float env = smoothstep(0.0, 0.1, h) * (1.0 - smoothstep(0.82, 1.03, h));
-        return saturate(shape * env * (0.5 + 0.85 * shapeNoise(wp - uAirOffset))) * uDensity;
+        vec3 air = wp - uAirOffset;
+        float density = remap01(shapeNoise(air), 1.0 - coverage, 1.0);
+        float env = smoothstep(0.0, 0.05, h) * (1.0 - smoothstep(0.82, 1.05, h));
+        return clamp(density * env, 0.0, 1.0) * uDensity;
       }
 
       vec3 cumulusAlbedo(float h) {

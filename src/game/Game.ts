@@ -660,6 +660,11 @@ export class Game {
     this.sky.weatherScene = weatherScene;
     this.sky.setStratiformAtmosphere(this.stratiformClouds.atmosphereState());
     this.weather.syncRegional(this.sky.weatherSample);
+    // Champ de cumulus de beau temps : quand il est l'autorité (ciel cumulus),
+    // on coupe les cumulus AMBIANTS convectifs/legacy pour éviter les blobs
+    // parasites — les orages (événements) restent intacts (ciel non-cumulus).
+    const cumulusFieldWeather = deriveCumulusFieldWeather(weatherScene, this.sky.weatherSample!, this.weatherEngine.state.time);
+    this.regionalClouds.setAmbientSuppressed(cumulusFieldWeather.active);
     const tAtmosphere = this.profiler.begin();
     const dayFactor = this.sky.updateWithWorld(delta, this.time, this.weather, this.player, world);
     this.profiler.add("atmosphere", tAtmosphere);
@@ -690,7 +695,10 @@ export class Game {
     this.cloudVisualDelta += delta;
     if (this.cloudVisualTimer <= 0) {
       this.cloudVisualTimer = this.qualityPreset === "high" ? 0.12 : this.qualityPreset === "balanced" ? 0.22 : 0.4;
-      this.cloudSystem.update(this.cloudVisualDelta, this.player.position.x, this.player.position.z);
+      // Legacy CloudSystem (masses discrètes) coupé quand le champ fair-weather gère le ciel.
+      if (!cumulusFieldWeather.active) {
+        this.cloudSystem.update(this.cloudVisualDelta, this.player.position.x, this.player.position.z);
+      }
       this.cloudVisualDelta = 0;
     }
     this.profiler.add("clouds", tClouds);
@@ -718,8 +726,7 @@ export class Game {
     this.profiler.addMs("stratiform_noise", this.stratiformClouds.noiseBakeMs);
     // Champ de cumulus de beau temps world-space (streaming + rendu volumétrique LOD).
     const tCumulusField = this.profiler.begin();
-    const cumulusWeather = deriveCumulusFieldWeather(weatherScene, sample, this.weatherEngine.state.time);
-    this.cumulusField.update(this.player.position.x, this.player.position.z, cumulusWeather, this.qualityPreset);
+    this.cumulusField.update(this.player.position.x, this.player.position.z, cumulusFieldWeather, this.qualityPreset);
     this.profiler.add("cumulus_field", tCumulusField);
     this.profiler.addMs("cumulus_streaming", this.cumulusField.debug().streamMs);
     const tCumulusRender = this.profiler.begin();
@@ -1432,6 +1439,7 @@ export class Game {
     return {
       enabled: render.enabled,
       active: render.active,
+      regime: field.regime,
       coverage: field.coverage,
       windX: field.windX,
       windZ: field.windZ,
@@ -1442,6 +1450,12 @@ export class Game {
       near: render.near,
       mid: render.mid,
       horizon: render.horizon,
+      blueSkyFraction: field.blueSkyFraction,
+      spacing: field.spacing,
+      dominant: field.dominant,
+      largestRadius: field.largestRadius,
+      largestMaturity: field.largestMaturity,
+      legacyMasses: this.regionalClouds.ambientVolumeCount,
       seed: field.seed,
       tileX: field.tileX,
       tileZ: field.tileZ,
@@ -1462,7 +1476,10 @@ export class Game {
         this.cumulusFieldRenderer.clear();
         this.stormCloudMasses.clear();
       },
-      cumulusField: { reset: () => { this.cumulusField.reset(); this.cumulusFieldRenderer.clear(); } },
+      cumulusField: {
+        reset: () => { this.cumulusField.reset(); this.cumulusFieldRenderer.clear(); },
+        setRegime: (regime) => this.cumulusField.setRegime(regime),
+      },
       groundSystem: this.groundSystem,
       surfaceState: this.surfaceState,
       radarHistory: this.radarHistory,

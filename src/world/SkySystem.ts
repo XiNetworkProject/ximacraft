@@ -151,7 +151,14 @@ export class SkySystem {
       const nightDeck = new THREE.Color(0x141b25);
       const nightHazeDeck = new THREE.Color(0x1e2732);
       top.lerp(nightDeck.clone().lerp(overcastTop, dayFactor), stratiformInfluence * (heavy ? 0.82 : 0.66));
-      horizon.lerp(nightHazeDeck.clone().lerp(overcastHorizon, dayFactor), stratiformInfluence * (heavy ? 0.9 : 0.72));
+      // PROLONGEMENT ATMOSPHÉRIQUE : sous forte couverture, l'horizon devient
+      // gris (mêmes données météo) pour rejoindre le deck volumétrique — plus
+      // aucune frontière bleu/gris nette là où le volume se dissout.
+      const horizonGrey = THREE.MathUtils.smoothstep(stratiformInfluence, 0.12, 0.6);
+      horizon.lerp(
+        nightHazeDeck.clone().lerp(overcastHorizon, dayFactor),
+        Math.max(stratiformInfluence * (heavy ? 0.9 : 0.72), horizonGrey * (heavy ? 0.95 : 0.86)),
+      );
     }
 
     const legacyVisibilityLoss = Math.max(

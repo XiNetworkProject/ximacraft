@@ -93,6 +93,26 @@ des sources sous licence, ce qui a seulement été **étudié**, et ce qui relè
 | frmlinn/clouds-sim | MIT (c) 2026 frmlinn | **Adapté** (clean-room) | `StratiformNoiseTextures.ts`, `StratiformCloudRenderer.ts`, `CumulusFieldRenderer.ts` |
 | mhr1235/cl0ud | Non confirmée | **Inspiration esthétique seule — aucun code** | — |
 
+## Phase 2B-2 / 2A-3 — continuité des ciels + régimes de beau temps
+
+- **Cumulus (silhouette)** : structure claire macro (lobes = base) → medium
+  breakup (2ᵉ octave 3D + domain-warp) → fine erosion (Worley détail). Le bruit
+  3D définit désormais réellement la silhouette (remap par la couverture macro) :
+  base plus plate, dessous plus sombre/irrégulier, sommet bourgeonnant, contours
+  moins ronds.
+- **Régimes déterministes** (`CumulusRegimeName`, table `CUMULUS_REGIMES`) :
+  crystal_clear → humid_summer_cumulus, chacun modifiant couverture, espacement,
+  taille, base, épaisseur, maturité, chance de formation dominante, fraction de
+  ciel bleu et portée horizon. Dérivés de la seed/zone/humidité/ciel, ou forcés
+  via `/weather visual cumulus_clear|sparse|classic|broken|dominant|humid`.
+- **Autorité cumulus** : sous ciel fair-weather, `RegionalCloudController.setAmbientSuppressed(true)`
+  coupe les cumulus ambiants convectifs/legacy (les orages, ciels non-cumulus,
+  restent intacts) → `CumulusFieldRenderer` seule autorité.
+- **Continuité overcast/rain** : fondu horizontal doux des decks stratiformes
+  (plus de face de boîte visible) + front pluvieux progressif (voile bord d'attaque
+  → nimbostratus dense) + horizon gris prolongé dans `SkySystem` (mêmes données
+  météo) → plus de frontière bleu/gris nette ni de mur diagonal.
+
 ## Phase 2B-1 — champ de cumulus de beau temps
 
 `src/clouds/FairWeatherCumulusField.ts` (logique monde, pure) + `src/render/weather/CumulusFieldRenderer.ts` (rendu volumétrique LOD) réutilisent le **même bruit 3D partagé** (`StratiformNoiseTextures`) et les mêmes techniques adaptées (raymarch ray-box, Beer-Lambert, Henyey-Greenstein, jitter blue-noise stable, early-exit, érosion forme+détail). Le champ est **streamé en espace de masse d'air** (`airMass = world - wind·time`) sur une grille globale déterministe (hash par cellule), avec 3 zones de LOD et fondu atmosphérique. Aucun sprite/billboard/blob 2D ; `SkyCloudPopulationRenderer` reste coupé. Audit : `CloudVolumeRenderer` (unique FrameCompositor, lié à `ConvectiveCloudSystem`, budget 8 bakes) n'a pas été détourné — inadapté à un champ streamé de dizaines de cumulus.

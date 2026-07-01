@@ -22,6 +22,47 @@ import { SkyState, WeatherSceneState } from "../weather/scene/WeatherScene";
 
 export type CumulusQuality = "low" | "balanced" | "high";
 
+/** Sous-régimes déterministes de ciel de beau temps (jamais orageux/pluvieux). */
+export type CumulusRegimeName =
+  | "crystal_clear"
+  | "isolated_humilis"
+  | "sparse_fair_cumulus"
+  | "classic_fair_cumulus"
+  | "scattered_mediocris"
+  | "broken_fair_weather"
+  | "dominant_cumulus_day"
+  | "humid_summer_cumulus";
+
+interface CumulusRegimeProfile {
+  coverageMul: number;
+  /** >1 = plus espacé (moins de nuages) ; <1 = plus dense. */
+  spacing: number;
+  /** Exposant de contraste du champ de regroupement (amas + grandes clairières). */
+  clusterSharpen: number;
+  sizeMul: number;
+  thicknessMul: number;
+  maturityMul: number;
+  /** Probabilité, par région, d'une formation dominante nettement plus grosse. */
+  dominantChance: number;
+}
+
+const CUMULUS_REGIMES: Record<CumulusRegimeName, CumulusRegimeProfile> = {
+  crystal_clear: { coverageMul: 0.05, spacing: 2.6, clusterSharpen: 1.6, sizeMul: 0.7, thicknessMul: 0.65, maturityMul: 0.35, dominantChance: 0 },
+  isolated_humilis: { coverageMul: 0.16, spacing: 2.1, clusterSharpen: 1.5, sizeMul: 0.72, thicknessMul: 0.62, maturityMul: 0.3, dominantChance: 0 },
+  sparse_fair_cumulus: { coverageMul: 0.42, spacing: 1.55, clusterSharpen: 1.25, sizeMul: 0.86, thicknessMul: 0.85, maturityMul: 0.5, dominantChance: 0.08 },
+  classic_fair_cumulus: { coverageMul: 0.78, spacing: 1.0, clusterSharpen: 1.0, sizeMul: 1.0, thicknessMul: 1.0, maturityMul: 0.6, dominantChance: 0.18 },
+  scattered_mediocris: { coverageMul: 0.98, spacing: 0.85, clusterSharpen: 1.0, sizeMul: 1.22, thicknessMul: 1.3, maturityMul: 0.82, dominantChance: 0.24 },
+  broken_fair_weather: { coverageMul: 1.2, spacing: 0.72, clusterSharpen: 2.1, sizeMul: 1.12, thicknessMul: 1.05, maturityMul: 0.7, dominantChance: 0.14 },
+  dominant_cumulus_day: { coverageMul: 0.5, spacing: 1.35, clusterSharpen: 1.3, sizeMul: 0.92, thicknessMul: 1.0, maturityMul: 0.62, dominantChance: 0.92 },
+  humid_summer_cumulus: { coverageMul: 1.0, spacing: 0.92, clusterSharpen: 1.1, sizeMul: 1.4, thicknessMul: 1.65, maturityMul: 0.96, dominantChance: 0.34 },
+};
+
+const REGION_CELLS = 6;
+/** Maille grossière des formations dominantes (≈ plusieurs km) → 1 à 2 en vue. */
+const DOMINANT_REGION_CELLS = 8;
+const DOMINANT_SIZE_MUL = 2.7;
+const DOMINANT_THICKNESS_MUL = 2.3;
+
 export interface CumulusFieldWeather {
   /** Champ actif seulement dans les états de ciel cumulus de beau temps. */
   active: boolean;
@@ -50,12 +91,14 @@ export interface CumulusFormation {
   coverage: number;
   lobes: number;
   seed: number;
+  dominant: boolean;
   distance: number;
 }
 
 export interface CumulusFieldDebug {
   active: boolean;
   seed: number;
+  regime: CumulusRegimeName;
   coverage: number;
   humidity: number;
   windX: number;
@@ -66,6 +109,11 @@ export interface CumulusFieldDebug {
   nearFormations: number;
   midFormations: number;
   horizonFormations: number;
+  blueSkyFraction: number;
+  spacing: number;
+  dominant: boolean;
+  largestRadius: number;
+  largestMaturity: number;
   tileX: number;
   tileZ: number;
   streamRadius: number;
@@ -169,10 +217,12 @@ export function deriveCumulusFieldWeather(
 
 export class FairWeatherCumulusField {
   private seed = 0;
+  private forcedRegime: CumulusRegimeName | null = null;
   private readonly active: CumulusFormation[] = [];
   private readonly lastDebug: CumulusFieldDebug = {
     active: false,
     seed: 0,
+    regime: "classic_fair_cumulus",
     coverage: 0,
     humidity: 0,
     windX: 0,
@@ -183,6 +233,11 @@ export class FairWeatherCumulusField {
     nearFormations: 0,
     midFormations: 0,
     horizonFormations: 0,
+    blueSkyFraction: 1,
+    spacing: 0,
+    dominant: false,
+    largestRadius: 0,
+    largestMaturity: 0,
     tileX: 0,
     tileZ: 0,
     streamRadius: 0,
@@ -193,6 +248,11 @@ export class FairWeatherCumulusField {
     this.seed = hashSeedString(seed);
     this.lastDebug.seed = this.seed;
     this.active.length = 0;
+  }
+
+  /** Force un sous-régime (Visual Lab). `null` = régime dérivé du ciel/zone. */
+  setRegime(regime: CumulusRegimeName | null): void {
+    this.forcedRegime = regime;
   }
 
   reset(): void {
@@ -230,7 +290,13 @@ export class FairWeatherCumulusField {
     this.lastDebug.tileX = centerCellX;
     this.lastDebug.tileZ = centerCellZ;
 
-    if (!weather.active || weather.coverage <= 0.001) {
+    const regime = this.deriveRegime(weather, centerCellX, centerCellZ);
+    const profile = CUMULUS_REGIMES[regime];
+    this.lastDebug.regime = regime;
+    this.lastDebug.spacing = Math.round(CELL * profile.spacing);
+    const cov = clamp(weather.coverage * profile.coverageMul, 0, 1);
+
+    if (!weather.active || cov <= 0.001) {
       this.lastDebug.scannedCells = 0;
       this.lastDebug.activeTiles = 0;
       this.finishDebug(settings, now() - started);
@@ -250,9 +316,12 @@ export class FairWeatherCumulusField {
         // Centre jitté de la cellule (évite toute grille régulière).
         const airX = ci * CELL + CELL * (0.12 + 0.76 * hashCell(this.seed, ci, cj, 1));
         const airZ = cj * CELL + CELL * (0.12 + 0.76 * hashCell(this.seed, ci, cj, 2));
+        // Formation dominante déterministe par région (une grosse masse + petites autour).
+        const isDominant = this.isDominantCell(ci, cj, profile.dominantChance);
         // Champ continu de regroupement → clairières et amas, jamais 1/cellule fixe.
-        const cluster = clusterField(airX, airZ, this.seed);
-        const presence = clamp(weather.coverage * (0.35 + 1.35 * cluster) - 0.12, 0, 0.95);
+        const cluster = Math.pow(clusterField(airX, airZ, this.seed), profile.clusterSharpen);
+        let presence = clamp(cov * (0.35 + 1.5 * cluster) - 0.1, 0, 0.96) / profile.spacing;
+        if (isDominant) presence = 1;
         if (hashCell(this.seed, ci, cj, 3) >= presence) continue;
         activeTiles += 1;
 
@@ -263,28 +332,41 @@ export class FairWeatherCumulusField {
         const distSq = ddx * ddx + ddz * ddz;
         if (distSq > radiusSq) continue;
 
-        const maturity = clamp(hashCell(this.seed, ci, cj, 6) * (0.4 + 0.8 * weather.coverage), 0, 1);
+        let maturity = clamp((0.35 + 0.7 * hashCell(this.seed, ci, cj, 6)) * profile.maturityMul, 0, 1);
+        let radius = lerp(105, 330, hashCell(this.seed, ci, cj, 7)) * (0.7 + 0.55 * cov) * profile.sizeMul;
+        let thickness = lerp(170, 410, hashCell(this.seed, ci, cj, 5)) * (0.65 + 0.85 * maturity) * profile.thicknessMul;
+        let density = lerp(0.6, 1.0, hashCell(this.seed, ci, cj, 8));
+        let lobes = 2 + Math.floor(hashCell(this.seed, ci, cj, 9) * 3);
+        if (isDominant) {
+          radius *= DOMINANT_SIZE_MUL;
+          thickness *= DOMINANT_THICKNESS_MUL;
+          maturity = clamp(maturity * 1.3 + 0.32, 0, 1);
+          density = Math.max(density, 0.9);
+          lobes = 4;
+        }
+
         this.active.push({
           id: (ci + CELL_ID_OFFSET) * 65536 + (cj + CELL_ID_OFFSET),
           cellX: ci,
           cellZ: cj,
           worldX,
           worldZ,
-          baseHeight: lerp(340, 560, hashCell(this.seed, ci, cj, 4)) + (1 - weather.humidity) * 60,
-          thickness: lerp(180, 380, hashCell(this.seed, ci, cj, 5)) * (0.7 + 0.7 * maturity),
-          radius: lerp(110, 300, hashCell(this.seed, ci, cj, 7)) * (0.75 + 0.5 * weather.coverage),
-          density: lerp(0.65, 1.0, hashCell(this.seed, ci, cj, 8)),
+          baseHeight: lerp(340, 620, hashCell(this.seed, ci, cj, 4)) + (1 - weather.humidity) * 70,
+          thickness,
+          radius,
+          density,
           maturity,
-          coverage: weather.coverage,
-          lobes: 2 + Math.floor(hashCell(this.seed, ci, cj, 9) * 3),
+          coverage: cov,
+          lobes,
           seed: hashCell(this.seed, ci, cj, 10),
+          dominant: isDominant,
           distance: Math.sqrt(distSq),
         });
       }
     }
 
-    // Budget borné : on garde les plus proches (déplacement lointain = pas de crash).
-    this.active.sort((a, b) => a.distance - b.distance);
+    // Budget borné : dominantes prioritaires, puis les plus proches.
+    this.active.sort((a, b) => (Number(b.dominant) - Number(a.dominant)) || (a.distance - b.distance));
     if (this.active.length > settings.budget) this.active.length = settings.budget;
 
     this.lastDebug.scannedCells = scanned;
@@ -296,19 +378,59 @@ export class FairWeatherCumulusField {
     return { ...this.lastDebug };
   }
 
+  private deriveRegime(weather: CumulusFieldWeather, centerCellX: number, centerCellZ: number): CumulusRegimeName {
+    if (this.forcedRegime) return this.forcedRegime;
+    // Variation par ZONE (le monde n'est pas partout le même ciel).
+    const rx = Math.floor(centerCellX / (REGION_CELLS * 3));
+    const rz = Math.floor(centerCellZ / (REGION_CELLS * 3));
+    const zone = hashCell(this.seed, rx, rz, 71);
+    const cover = weather.coverage;
+    const humid = weather.humidity;
+    if (cover < 0.2) return zone < 0.5 ? "isolated_humilis" : "sparse_fair_cumulus";
+    if (humid > 0.72) return zone < 0.6 ? "humid_summer_cumulus" : "scattered_mediocris";
+    if (cover > 0.6) return zone < 0.4 ? "broken_fair_weather" : "scattered_mediocris";
+    if (zone < 0.14) return "dominant_cumulus_day";
+    if (zone < 0.44) return "sparse_fair_cumulus";
+    return "classic_fair_cumulus";
+  }
+
+  private isDominantCell(ci: number, cj: number, chance: number): boolean {
+    if (chance <= 0) return false;
+    const rx = Math.floor(ci / DOMINANT_REGION_CELLS);
+    const rz = Math.floor(cj / DOMINANT_REGION_CELLS);
+    if (hashCell(this.seed, rx, rz, 51) >= chance) return false;
+    const anchorI = rx * DOMINANT_REGION_CELLS + Math.floor(hashCell(this.seed, rx, rz, 52) * DOMINANT_REGION_CELLS);
+    const anchorJ = rz * DOMINANT_REGION_CELLS + Math.floor(hashCell(this.seed, rx, rz, 53) * DOMINANT_REGION_CELLS);
+    return ci === anchorI && cj === anchorJ;
+  }
+
   private finishDebug(settings: QualitySettings, streamMs: number): void {
     let near = 0;
     let mid = 0;
     let horizon = 0;
+    let largestRadius = 0;
+    let largestMaturity = 0;
+    let dominant = false;
     for (const formation of this.active) {
       if (formation.distance <= settings.nearDistance) near += 1;
       else if (formation.distance <= settings.midDistance) mid += 1;
       else horizon += 1;
+      if (formation.radius > largestRadius) {
+        largestRadius = formation.radius;
+        largestMaturity = formation.maturity;
+      }
+      dominant = dominant || formation.dominant;
     }
     this.lastDebug.formations = this.active.length;
     this.lastDebug.nearFormations = near;
     this.lastDebug.midFormations = mid;
     this.lastDebug.horizonFormations = horizon;
+    this.lastDebug.blueSkyFraction = this.lastDebug.scannedCells > 0
+      ? clamp(1 - this.lastDebug.activeTiles / this.lastDebug.scannedCells, 0, 1)
+      : 1;
+    this.lastDebug.dominant = dominant;
+    this.lastDebug.largestRadius = largestRadius;
+    this.lastDebug.largestMaturity = largestMaturity;
     this.lastDebug.streamMs = streamMs;
   }
 }
