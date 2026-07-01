@@ -122,7 +122,7 @@ export class PrecipitationRenderer {
           p.x = mod(position.x + t * uWind.x + swayX + uArea, uArea * 2.0) - uArea;
           p.z = mod(position.z + t * uWind.y + swayZ + uArea, uArea * 2.0) - uArea;
           vec4 mv = modelViewMatrix * vec4(p, 1.0);
-          gl_PointSize = clamp(uSize * aSize * 108.0 / max(18.0, -mv.z), 0.55, 5.4);
+          gl_PointSize = clamp(uSize * aSize * 92.0 / max(24.0, -mv.z), 0.45, 3.6);
           // Variation lente d'orientation, sans scintillement blanc lumineux.
           vFade = 0.78 + 0.12 * sin(t * 1.25 + aPhase * 2.0);
           gl_Position = projectionMatrix * mv;
@@ -218,7 +218,7 @@ export class PrecipitationRenderer {
     this.flakeMaterial.uniforms.uTime.value = this.time;
     this.flakeMaterial.uniforms.uWind.value.set(sample.windX * (dust ? 0.5 : hail || sleet ? 0.09 : 0.18), sample.windZ * (dust ? 0.5 : hail || sleet ? 0.09 : 0.18));
     this.flakeMaterial.uniforms.uFall.value = dust ? 0.5 : hail ? 28 + intensity * 44 : sleet ? 18 + intensity * 28 : 3.0 + intensity * 7.5;
-    this.flakeMaterial.uniforms.uSize.value = dust ? 4 + intensity * 5 : hail || sleet ? 0.92 + intensity * 0.45 : 0.72 + intensity * 0.82;
+    this.flakeMaterial.uniforms.uSize.value = dust ? 3 + intensity * 4 : hail || sleet ? 0.82 + intensity * 0.36 : 0.54 + intensity * 0.54;
     // Grêle = chute droite (peu de virevoltement) ; neige = forte turbulence.
     this.flakeMaterial.uniforms.uSway.value = dust ? 2.4 : hail || sleet ? 0.12 : 1.0;
     this.flakeMaterial.uniforms.uHail.value = hail || sleet ? 1 : 0;
@@ -258,12 +258,8 @@ export class PrecipitationRenderer {
       positions.set([(Math.random() - 0.5) * AREA * 2, Math.random() * HEIGHT, (Math.random() - 0.5) * AREA * 2], i * 3);
       speeds[i] = 0.6 + Math.random() * 0.55;
       phases[i] = Math.random() * Math.PI * 2;
-      amps[i] = 0.55 + Math.random() * 2.4;
-      sizes[i] = 0.42 + Math.random() * 0.95;
-      amps[i] = 0.4 + Math.random() * 1.8; // amplitude de virevoltement variée
-      sizes[i] = 0.5 + Math.random() * 1.1; // tailles variées (gros/petits flocons)
-      amps[i] = 0.55 + Math.random() * 2.4;
-      sizes[i] = 0.42 + Math.random() * 0.95;
+      amps[i] = 0.35 + Math.random() * 1.35;
+      sizes[i] = 0.38 + Math.random() * 0.62;
     }
     this.flakeGeometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
     this.flakeGeometry.setAttribute("aSpeed", new THREE.BufferAttribute(speeds, 1));

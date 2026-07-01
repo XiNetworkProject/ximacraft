@@ -56,6 +56,11 @@ export class GroundAccumulationSystem {
     this.override = { kind, intensity: clamp01(intensity), secondsLeft: seconds };
   }
 
+  clearOverride(): void {
+    this.override = null;
+    this.accumulator = 0;
+  }
+
   get forcedPrecipitation(): Readonly<{ kind: PrecipKind; intensity: number }> | null {
     return this.override;
   }

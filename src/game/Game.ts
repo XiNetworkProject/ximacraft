@@ -20,6 +20,10 @@ import { World } from "../world/World";
 import { WeatherEngine } from "../weather/WeatherEngine";
 import { WeatherDirector } from "../weather/WeatherDirector";
 import { WeatherVisualDirector } from "../weather/WeatherVisualDirector";
+import {
+  startWeatherVisualLabScenario as startWeatherVisualLab,
+  WeatherVisualScenarioName,
+} from "../weather/WeatherVisualLab";
 import { ForecastSystem } from "../weather/forecast/ForecastSystem";
 import type { ForecastTimeline } from "../weather/forecast/ForecastTimeline";
 import { WeatherAlertSystem } from "../weather/alerts/WeatherAlertSystem";
@@ -226,6 +230,7 @@ export class Game {
     this.groundRenderer = new GroundCoverRenderer(this.renderer.scene, this.surfaceState);
     this.precipitation = new PrecipitationRenderer(this.renderer.scene);
     this.rainCurtains = new RainCurtainRenderer(this.renderer.scene);
+    this.rainCurtains.setEnabled(false);
     // Volumétrique désactivé (rendu "soucoupe" blob) : les orages passent par
     // CloudMassRenderer (billboards tour + enclume), cohérent avec le style voxel.
     this.windVisuals = new WindVisualSystem(this.renderer.scene);
@@ -243,7 +248,8 @@ export class Game {
     this.weatherVisual = new WeatherVisualDirector({
       stratiformDome: this.sky.clouds,
       cloudSprites: this.skyCloudPopulation,
-    });
+      distantPrecipitation: this.rainCurtains,
+    }, this.overlay);
 
     this.hud = new HUD(this.overlay);
     this.hotbar = new HotbarUI(this.overlay, this.player.inventory, this.blockRegistry, this.textureManager);
@@ -763,7 +769,11 @@ export class Game {
       this.radarHistory.recordStrike(strike.x, strike.z, strike.intensity, this.weatherEngine.state.time);
     }
     this.lightningRenderer.update(delta, camera);
-    this.rainCurtains.update(delta, events, camera, sample.windX, sample.windZ);
+    if (this.rainCurtains.isEnabled()) {
+      this.rainCurtains.update(delta, events, camera, sample.windX, sample.windZ);
+    } else {
+      this.rainCurtains.clear();
+    }
     this.precipitation.update(
       delta,
       sample,
@@ -773,6 +783,38 @@ export class Game {
       { dayFactor, lightning: this.lightningRenderer.flashAmount },
       weatherScene.precipitation,
     );
+    this.weatherVisual.updateLabMetrics({
+      events: events.map((event) => ({
+        id: event.id,
+        type: event.type,
+        x: event.x,
+        z: event.z,
+        radius: event.radius,
+        intensity: event.intensity,
+        precip: event.precip,
+        producesLightning: event.producesLightning,
+      })),
+      playerX: this.player.position.x,
+      playerZ: this.player.position.z,
+      convectiveMasses: this.convectiveClouds.masses.length,
+      sample: {
+        weatherType: sample.weatherType,
+        cloudCover: sample.cloudCover,
+        precipitation: sample.precipitation,
+        thunderRisk: sample.thunderRisk,
+        temperature: sample.temperature,
+        windSpeed: sample.windSpeed,
+      },
+      scenePrecip: {
+        kind: weatherScene.precipitation.kind,
+        intensity: weatherScene.precipitation.intensity,
+        reachesGround: weatherScene.precipitation.reachesGround,
+      },
+      fogDensity: environment.fog.density,
+      snowDepth: this.surfaceState.get(this.player.position.x, this.player.position.z)?.snowDepth ?? 0,
+      precipitationRenderer: this.precipitation.debugState,
+      rainCurtains: this.rainCurtains.debugState,
+    });
     this.profiler.add("precip", tPrecip);
     if (hasWeatherVisuals && this.weatherVisualTimer <= 0) {
       this.weatherVisualTimer = this.qualityPreset === "high" ? 0.06 : this.qualityPreset === "balanced" ? 0.14 : 0.28;
@@ -1333,6 +1375,30 @@ export class Game {
     });
   }
 
+  private startWeatherVisualLabScenario(scenario: WeatherVisualScenarioName) {
+    return startWeatherVisualLab(scenario, {
+      engine: this.weatherEngine,
+      scenarios: this.weatherDirector.scenarios,
+      convectiveClouds: this.convectiveClouds,
+      resetCloudVisuals: () => {
+        this.convectiveClouds.clear();
+        this.regionalClouds.reset();
+        this.stormCloudMasses.clear();
+      },
+      groundSystem: this.groundSystem,
+      surfaceState: this.surfaceState,
+      radarHistory: this.radarHistory,
+      lightning: this.lightning,
+      rainCurtains: this.rainCurtains,
+      setTime: (name) => {
+        if (!this.time.setNamedTime(name)) this.time.setNamedTime("day");
+      },
+      setLegacyWeather: (type, duration, intensity) => {
+        this.weather.setWeather(type as Parameters<WeatherSystem["setWeather"]>[0], duration, intensity, true);
+      },
+    });
+  }
+
   private updateCommandContext(): void {
     if (!this.world) return;
     this.command.setContext({
@@ -1375,6 +1441,7 @@ export class Game {
       environmentDirector: this.environmentDirector,
       radarHistory: this.radarHistory,
       weatherVisual: this.weatherVisual,
+      startWeatherVisualLabScenario: (scenario) => this.startWeatherVisualLabScenario(scenario),
     });
   }
 

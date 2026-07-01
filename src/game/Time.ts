@@ -19,6 +19,7 @@ export class Time {
       sunrise: 0,
       day: 1000,
       noon: 6000,
+      afternoon: 9000,
       sunset: 12000,
       night: 14000,
       midnight: 18000,

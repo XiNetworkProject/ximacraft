@@ -17,6 +17,7 @@ import { WeatherAlertSystem } from "../weather/alerts/WeatherAlertSystem";
 import { WeatherMapUI } from "../ui/weather/WeatherMapUI";
 import { WeatherDirector } from "../weather/WeatherDirector";
 import { WeatherVisualDirector, WeatherVisualMode } from "../weather/WeatherVisualDirector";
+import { WEATHER_VISUAL_SCENARIOS, WeatherVisualLabResult, WeatherVisualScenarioName } from "../weather/WeatherVisualLab";
 import { LivingWorldSystem } from "../living/LivingWorldSystem";
 import { SeasonSystem, SeasonId } from "../living/SeasonSystem";
 import { AmbientBiomeAudioSystem } from "../living/AmbientBiomeAudioSystem";
@@ -73,6 +74,7 @@ export type CommandContext = {
   radarHistory?: WeatherRadarHistory;
   /** Autorité visuelle météo (mode A/B + tableau des renderers). */
   weatherVisual?: WeatherVisualDirector;
+  startWeatherVisualLabScenario?: (scenario: WeatherVisualScenarioName) => WeatherVisualLabResult;
 };
 
 const weatherTypes: WeatherType[] = [
@@ -136,7 +138,7 @@ const VISUAL_SCENARIOS: Record<string, { command: string[]; look: string; render
   },
 };
 
-const VISUAL_SCENARIO_NAMES = Object.keys(VISUAL_SCENARIOS);
+const VISUAL_SCENARIO_NAMES = [...WEATHER_VISUAL_SCENARIOS];
 
 export type CommandDefinition = {
   usage: string;
@@ -502,6 +504,7 @@ export class CommandSystem {
         this.write("Weather visual director unavailable.");
         return;
       }
+      visual.openLabPanel();
       for (const line of visual.layersReport()) this.write(line);
       return;
     }
@@ -525,21 +528,23 @@ export class CommandSystem {
       return;
     }
 
-    const scenario = VISUAL_SCENARIOS[sub];
-    if (!scenario) {
+    if (!VISUAL_SCENARIO_NAMES.includes(sub as WeatherVisualScenarioName)) {
       this.write(`Unknown visual scenario '${sub}'. Try: ${VISUAL_SCENARIO_NAMES.join(", ")}`);
       return;
     }
-    // Le laboratoire se joue toujours dans le nouveau rendu.
-    visual?.setMode("new");
-    const handled = this.weatherCommands?.handle(scenario.command.slice());
-    if (!handled) {
+    if (!context.startWeatherVisualLabScenario) {
       this.write(`Visual scenario '${sub}' could not start.`);
       return;
     }
-    this.write(`▶ Visual: ${sub} — ${scenario.look}`);
-    this.write(`   Renderer: ${scenario.renderer}`);
-    this.write("   Astuce: /weather debug cells|fronts|field|cloudlayers pour voir les coordonnées monde.");
+    visual?.setMode("new");
+    const result = context.startWeatherVisualLabScenario(sub as WeatherVisualScenarioName);
+    visual?.setLabScenario(result);
+    this.write(`Visual: ${sub} - ${result.label}`);
+    this.write(`   ${result.expected}`);
+    this.write(`   Renderers: ${result.renderers.join(", ")}`);
+    for (const warning of result.warnings) this.write(`   Warning: ${warning}`);
+    if (result.incomplete) this.write(`   Incomplete: ${result.incomplete}`);
+    this.write("   Panel: /weather visual layers. Debug: /weather debug field|fronts|cloudlayers.");
   }
 
   /** Vues debug unifiées lisant la simulation (source de vérité unique). */

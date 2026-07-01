@@ -12,6 +12,8 @@
 import * as THREE from "three";
 import { WeatherEngine } from "../src/weather/WeatherEngine";
 import { WeatherScenarioDirector } from "../src/weather/scene/WeatherScenarioDirector";
+import { ConvectiveCloudSystem } from "../src/clouds/ConvectiveCloudSystem";
+import { startWeatherVisualLabScenario, visualLabStormCellCount } from "../src/weather/WeatherVisualLab";
 import { PrecipitationKind, PrecipitationState, SkyState, WeatherScenario } from "../src/weather/scene/WeatherScene";
 import { WeatherType } from "../src/weather/WeatherTypes";
 import { CloudPopulation } from "../src/clouds/CloudPopulation";
@@ -109,6 +111,83 @@ function collectSkySequence(h: Harness, seconds: number, dt = 0.5): SkyState[] {
     if (seq[seq.length - 1] !== sky) seq.push(sky);
   }
   return seq;
+}
+
+function makeVisualLabHarness() {
+  const engine = new WeatherEngine();
+  engine.setObserver(0, 0);
+  const director = new WeatherScenarioDirector(engine);
+  director.setRng(mulberry32(2468));
+  const convectiveClouds = new ConvectiveCloudSystem();
+  const surfaceState = new SurfaceWeatherState(() => 64);
+  const groundSystem = new GroundAccumulationSystem(surfaceState);
+  const rainCurtains: { enabled: boolean; cleared: boolean; setEnabled(value: boolean): void; clear(): void } = {
+    enabled: true,
+    cleared: false,
+    setEnabled(value: boolean) {
+      rainCurtains.enabled = value;
+    },
+    clear() {
+      rainCurtains.cleared = true;
+    },
+  };
+  return { engine, director, convectiveClouds, surfaceState, groundSystem, rainCurtains };
+}
+
+function runVisualLab(
+  scenario: Parameters<typeof startWeatherVisualLabScenario>[0],
+  h = makeVisualLabHarness(),
+) {
+  const result = startWeatherVisualLabScenario(scenario, {
+    engine: h.engine,
+    scenarios: h.director,
+    convectiveClouds: h.convectiveClouds,
+    resetCloudVisuals: () => h.convectiveClouds.clear(),
+    groundSystem: h.groundSystem,
+    surfaceState: h.surfaceState,
+    rainCurtains: h.rainCurtains,
+  });
+  return { ...h, result };
+}
+
+// ============================================================================
+console.log("\n[visual lab] deterministic reset and scenarios");
+{
+  const clear = runVisualLab("clear");
+  const clearSample = clear.engine.sampleObserver();
+  check("visual clear empties events", clear.engine.activeEventCount === 0, `events=${clear.engine.activeEventCount}`);
+  check("visual clear empties convective masses", clear.convectiveClouds.masses.length === 0, `masses=${clear.convectiveClouds.masses.length}`);
+  check("visual clear has no local precipitation", clearSample.precipitation < 0.01, `precip=${clearSample.precipitation.toFixed(3)}`);
+  check("visual clear disables distant rain curtains", clear.rainCurtains.enabled === false && clear.rainCurtains.cleared);
+
+  const rain = runVisualLab("rain_front");
+  check("visual rain_front creates one rain band", rain.engine.getActiveEvents().length === 1 && rain.engine.getActiveEvents()[0].type === "rain_band");
+  check("visual rain_front creates no storm cell", visualLabStormCellCount(rain.engine) === 0, `storms=${visualLabStormCellCount(rain.engine)}`);
+  check("visual rain_front has no lightning event", rain.engine.getActiveEvents().every((event) => !event.producesLightning));
+
+  const cumulus = runVisualLab("fair_cumulus");
+  check("visual fair_cumulus creates 3-6 masses", cumulus.convectiveClouds.masses.length >= 3 && cumulus.convectiveClouds.masses.length <= 6, `masses=${cumulus.convectiveClouds.masses.length}`);
+  check("visual fair_cumulus masses are non-precipitating", cumulus.convectiveClouds.masses.every((mass) => mass.precipitationRate <= 0.001 && mass.stormVisual.precip === "none"));
+  check("visual fair_cumulus creates no storm event", visualLabStormCellCount(cumulus.engine) === 0);
+
+  const snow = runVisualLab("snow_squall");
+  const snowLocal = snow.engine.sampleObserver();
+  snow.groundSystem.update(1, snowLocal, 0, 0, 0, snow.director.currentScene.precipitation, -5);
+  check("visual snow_squall creates one snow cell", visualLabStormCellCount(snow.engine) === 1 && snow.engine.getActiveEvents()[0].precip === "snow");
+  check("visual snow_squall has no immediate local snow accumulation", snow.surfaceState.totalSnow() === 0, `snow=${snow.surfaceState.totalSnow().toFixed(3)} precip=${snowLocal.precipitation.toFixed(3)}`);
+  check("visual snow_squall disables lightning", snow.engine.getActiveEvents().every((event) => !event.producesLightning));
+
+  const storm = runVisualLab("thunderstorm");
+  check("visual thunderstorm creates exactly one storm cell", visualLabStormCellCount(storm.engine) === 1, `storms=${visualLabStormCellCount(storm.engine)}`);
+  check("visual thunderstorm cell can produce lightning", storm.engine.getActiveEvents().some((event) => event.producesLightning));
+
+  const switchHarness = makeVisualLabHarness();
+  runVisualLab("thunderstorm", switchHarness);
+  check("visual A starts with a storm", visualLabStormCellCount(switchHarness.engine) === 1);
+  runVisualLab("clear", switchHarness);
+  check("visual A->clear removes all residue", switchHarness.engine.activeEventCount === 0 && switchHarness.convectiveClouds.masses.length === 0);
+  runVisualLab("rain_front", switchHarness);
+  check("visual clear->rain_front has no storm residue", visualLabStormCellCount(switchHarness.engine) === 0 && switchHarness.engine.getActiveEvents().every((event) => event.type === "rain_band"));
 }
 
 // ============================================================================

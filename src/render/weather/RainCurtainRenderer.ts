@@ -27,6 +27,8 @@ export class RainCurtainRenderer {
   private readonly seeds = new Float32Array(MAX_STREAKS);
   private readonly proximities = new Float32Array(MAX_STREAKS);
   private time = 0;
+  private enabled = false;
+  private lastCount = 0;
 
   constructor(private readonly scene: THREE.Scene) {
     this.geometry.setAttribute(
@@ -135,7 +137,30 @@ export class RainCurtainRenderer {
     this.scene.add(this.points);
   }
 
+  setEnabled(enabled: boolean): void {
+    this.enabled = enabled;
+    if (!enabled) this.clear();
+  }
+
+  isEnabled(): boolean {
+    return this.enabled;
+  }
+
+  clear(): void {
+    this.lastCount = 0;
+    this.geometry.setDrawRange(0, 0);
+    this.points.visible = false;
+  }
+
+  get debugState(): { enabled: boolean; visible: boolean; drawCount: number } {
+    return { enabled: this.enabled, visible: this.points.visible, drawCount: this.lastCount };
+  }
+
   update(dt: number, events: readonly WeatherEvent[], cameraPosition: THREE.Vector3, windX: number, windZ: number): void {
+    if (!this.enabled) {
+      this.clear();
+      return;
+    }
     this.time += dt;
     this.material.uniforms.uTime.value = this.time;
     this.material.uniforms.uWindX.value = windX;
@@ -216,6 +241,7 @@ export class RainCurtainRenderer {
 
     this.geometry.setDrawRange(0, count);
     this.points.visible = count > 0;
+    this.lastCount = count;
     for (const key of ["position", "aSize", "aAlpha", "aKind", "aSeed", "aProximity"]) {
       this.geometry.getAttribute(key).needsUpdate = true;
     }
