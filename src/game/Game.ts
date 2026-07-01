@@ -733,6 +733,7 @@ export class Game {
     );
     this.biomeAmbience.update(world, this.player.position, sample, this.time.ticks, season, delta, environment);
     this.wildlifeAudio.update(delta, environment, this.player.position);
+    this.inventory.update(delta);
     this.updateTargetBlock();
 
     if (controlsEnabled) {
@@ -847,7 +848,7 @@ export class Game {
       !this.input.isDown("ShiftLeft") &&
       !this.input.isDown("ShiftRight")
     ) {
-      this.inventory.show();
+      this.inventory.showForBlock(hitBlock);
       this.hud.message(`${this.blockRegistry.get(hitBlock).displayName} opened.`);
       return;
     }

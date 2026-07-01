@@ -38,6 +38,9 @@ import { FogLodSystem } from "../src/render/weather/fog/FogLodSystem";
 import { EntityAssetManager } from "../src/living/EntityAssetManager";
 import { EntityAnimationController } from "../src/living/EntityAnimationController";
 import { SpatialAudioMixer } from "../src/assets/SpatialAudioMixer";
+import { PlayerInventory } from "../src/player/PlayerInventory";
+import { CraftingSystem } from "../src/items/CraftingSystem";
+import { SmeltingSystem } from "../src/items/SmeltingSystem";
 
 let passed = 0;
 let failed = 0;
@@ -489,6 +492,46 @@ console.log("\n[living] wildlife models, animation and spatial cues are real sys
   check("spatial wildlife mixer consume clears the event queue", mixer.consume().length === 0);
   assets.dispose();
   mixer.dispose();
+}
+
+// ============================================================================
+console.log("\n[inventory] survival inventory, crafting grid and furnace have real state");
+{
+  const inv = new PlayerInventory();
+  inv.slots.fill(null);
+  inv.slots[0] = { blockId: BlockId.OAK_PLANKS, count: 60 };
+  inv.slots[9] = { blockId: BlockId.OAK_PLANKS, count: 40 };
+  const remaining = inv.insertStack({ blockId: BlockId.OAK_PLANKS, count: 12 }, 0, inv.slots.length);
+  check("insertStack merges before using empty slots", remaining === null && inv.count(BlockId.OAK_PLANKS) === 112);
+  check("stacks stay capped at 64 while overflow occupies another slot", inv.slots.some((slot) => slot?.blockId === BlockId.OAK_PLANKS && slot.count === 64));
+  inv.moveSlotToRange(0, 9, inv.slots.length);
+  check("shift-style transfer moves hotbar stacks into inventory range", inv.slots[0] === null && inv.count(BlockId.OAK_PLANKS) === 112);
+
+  const crafting = new CraftingSystem();
+  const grid2 = Array.from({ length: 4 }, () => null) as Array<{ blockId: BlockId; count: number } | null>;
+  grid2[0] = { blockId: BlockId.OAK_PLANKS, count: 1 };
+  grid2[1] = { blockId: BlockId.OAK_PLANKS, count: 1 };
+  grid2[2] = { blockId: BlockId.OAK_PLANKS, count: 1 };
+  grid2[3] = { blockId: BlockId.OAK_PLANKS, count: 1 };
+  const tableMatch = crafting.matchGrid(grid2, 2, 2, false);
+  check("2x2 grid crafts a crafting table from four planks", tableMatch?.recipe.id === "planks_to_table" && tableMatch.output.blockId === BlockId.CRAFTING_TABLE);
+
+  const grid3 = Array.from({ length: 9 }, (_, index) => (index === 4 ? null : { blockId: BlockId.COBBLESTONE, count: 1 }));
+  const furnaceNoTable = crafting.matchGrid(grid3, 3, 3, false);
+  const furnaceWithTable = crafting.matchGrid(grid3, 3, 3, true);
+  check("3x3 furnace recipe requires a crafting table context", furnaceNoTable === null && furnaceWithTable?.output.blockId === BlockId.FURNACE);
+  if (furnaceWithTable) crafting.consumeMatchedGrid(grid3, 3, 3, furnaceWithTable.recipe);
+  check("crafting result consumes one ingredient from each occupied grid cell", grid3.filter(Boolean).length === 0);
+
+  const smelting = new SmeltingSystem();
+  const furnace = smelting.createState();
+  furnace.input = { blockId: BlockId.SAND, count: 2 };
+  furnace.fuel = { blockId: BlockId.COAL_ORE, count: 2 };
+  let changed = smelting.updateFurnace(furnace, 0.1);
+  check("furnace starts only from explicit input and fuel slots", changed && Boolean(furnace.activeRecipeId));
+  smelting.updateFurnace(furnace, 6);
+  check("furnace progress produces output after recipe duration", furnace.output?.blockId === BlockId.GLASS && furnace.output.count >= 1);
+  check("furnace consumes fuel and input instead of auto-smelting inventory", (furnace.input?.count ?? 0) <= 1 && (furnace.fuel?.count ?? 0) <= 1);
 }
 
 // ============================================================================

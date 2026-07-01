@@ -660,24 +660,43 @@ input {
   display: none !important;
 }
 
-.inventory-grid {
-  display: grid;
-  grid-template-columns: repeat(9, 1fr);
-  gap: 6px;
-  margin: 16px 0;
-}
-
 .inventory-panel {
   width: min(980px, calc(100vw - 32px));
   max-height: min(760px, calc(100vh - 32px));
   display: grid;
-  grid-template-rows: auto auto auto 1fr;
+  grid-template-rows: auto auto minmax(0, 1fr);
   gap: 12px;
   overflow: hidden;
 }
 
+.inventory-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 320px);
+  gap: 16px;
+  align-items: end;
+}
+
 .inventory-panel h2 {
   font-size: 24px;
+  margin: 0;
+}
+
+.inventory-subtitle,
+.inventory-hint {
+  margin: 5px 0 0;
+  color: #9fb0c2;
+  font-size: 12px;
+}
+
+.inventory-search {
+  width: 100%;
+  min-height: 40px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  background: rgba(5, 10, 18, 0.72);
+  color: #f8fafc;
+  padding: 0 12px;
+  outline: none;
 }
 
 .inventory-tabs {
@@ -695,16 +714,57 @@ input {
   padding: 0 12px;
 }
 
-.inventory-panel[data-tab="blocks"] .inventory-tab:first-child,
-.inventory-panel[data-tab="craft"] .inventory-tab:last-child {
+.inventory-panel[data-tab="inventory"] .inventory-tab[data-tab-target="inventory"],
+.inventory-panel[data-tab="blocks"] .inventory-tab[data-tab-target="blocks"],
+.inventory-panel[data-tab="craft"] .inventory-tab[data-tab-target="craft"],
+.inventory-panel[data-tab="furnace"] .inventory-tab[data-tab-target="furnace"] {
   background: #dbeafe;
   color: #0f172a;
   font-weight: 700;
 }
 
-.inventory-panel[data-tab="blocks"] .craft-list,
-.inventory-panel[data-tab="craft"] .creative-block-grid {
+.inventory-layout {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(360px, 0.9fr) minmax(420px, 1.1fr);
+  gap: 14px;
+}
+
+.inventory-panel[data-tab="inventory"] .inventory-layout {
+  grid-template-columns: minmax(360px, 720px);
+}
+
+.inventory-panel[data-tab="inventory"] .context-section,
+.inventory-panel[data-tab="blocks"] .craft-workbench,
+.inventory-panel[data-tab="blocks"] .furnace-workbench,
+.inventory-panel[data-tab="craft"] .creative-block-grid,
+.inventory-panel[data-tab="craft"] .furnace-workbench,
+.inventory-panel[data-tab="furnace"] .creative-block-grid,
+.inventory-panel[data-tab="furnace"] .craft-workbench {
   display: none;
+}
+
+.inventory-section {
+  min-height: 0;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  background: rgba(5, 10, 18, 0.34);
+  padding: 12px;
+  overflow: hidden;
+}
+
+.section-title {
+  margin-bottom: 10px;
+  color: #f8fafc;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.inventory-grid {
+  display: grid;
+  grid-template-columns: repeat(9, minmax(36px, 1fr));
+  gap: 6px;
+  margin: 0 0 12px;
 }
 
 .creative-block-grid {
@@ -742,7 +802,8 @@ input {
 }
 
 .creative-block-button .slot-texture,
-.craft-recipe .slot-texture {
+.craft-recipe .slot-texture,
+.recipe-book-entry .slot-texture {
   position: static;
   width: 38px;
   height: 38px;
@@ -762,6 +823,8 @@ input {
   border-radius: 5px;
   background: rgba(15, 23, 42, 0.78);
   cursor: pointer;
+  color: #f8fafc;
+  overflow: hidden;
 }
 
 .inventory-slot.selected {
@@ -774,6 +837,17 @@ input {
   inset: 6px;
 }
 
+.inventory-slot .slot-count,
+.inventory-carry .slot-count {
+  position: absolute;
+  right: 5px;
+  bottom: 4px;
+  color: #fff;
+  font: 700 11px/1 ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  text-shadow: 0 1px 2px #000;
+  z-index: 2;
+}
+
 .craft-list {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
@@ -781,6 +855,171 @@ input {
   min-height: 0;
   overflow: auto;
   padding-right: 2px;
+}
+
+.craft-workbench,
+.furnace-workbench {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 12px;
+}
+
+.craft-board {
+  display: grid;
+  grid-template-columns: auto 42px 62px;
+  gap: 12px;
+  align-items: center;
+}
+
+.crafting-grid {
+  display: grid;
+  gap: 6px;
+}
+
+.crafting-grid[data-size="2"] {
+  grid-template-columns: repeat(2, 56px);
+}
+
+.crafting-grid[data-size="3"] {
+  grid-template-columns: repeat(3, 52px);
+}
+
+.craft-arrow,
+.furnace-arrow {
+  color: #a8b7c7;
+  font-weight: 800;
+  text-align: center;
+}
+
+.recipe-book {
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 8px;
+  padding-right: 2px;
+}
+
+.recipe-book-title {
+  grid-column: 1 / -1;
+  color: #9fb0c2;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.recipe-book-entry {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-height: 58px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 7px;
+  background: rgba(15, 23, 42, 0.72);
+  color: #f8fafc;
+  cursor: pointer;
+  padding: 7px;
+  text-align: left;
+}
+
+.recipe-book-entry:disabled {
+  opacity: 0.46;
+  cursor: not-allowed;
+}
+
+.recipe-book-entry span {
+  min-width: 0;
+}
+
+.recipe-book-entry strong,
+.recipe-book-entry small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recipe-book-entry small {
+  color: #9fb0c2;
+  font-size: 11px;
+}
+
+.furnace-board {
+  display: grid;
+  grid-template-columns: 74px 92px 92px 36px 74px;
+  gap: 12px;
+  align-items: center;
+}
+
+.furnace-stack {
+  display: grid;
+  gap: 6px;
+  color: #a8b7c7;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.furnace-input,
+.furnace-fuel,
+.furnace-output {
+  width: 62px;
+}
+
+.furnace-core {
+  display: grid;
+  gap: 8px;
+}
+
+.furnace-flame {
+  width: 40px;
+  height: 40px;
+  margin: 0 auto;
+  border-radius: 50% 50% 42% 42%;
+  background: radial-gradient(circle at 50% 70%, #ffe08a 0 18%, #f97316 42%, rgba(239, 68, 68, 0.25) 70%, transparent 72%);
+  opacity: 0.28;
+  filter: drop-shadow(0 0 8px rgba(249, 115, 22, 0.32));
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.furnace-workbench.burning .furnace-flame {
+  opacity: 1;
+  animation: furnace-pulse 0.7s ease-in-out infinite alternate;
+}
+
+@keyframes furnace-pulse {
+  from { transform: scale(0.9); }
+  to { transform: scale(1.06); }
+}
+
+.furnace-progress {
+  height: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.22);
+}
+
+.furnace-progress span {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #f59e0b, #fde68a);
+}
+
+.inventory-carry {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 48px;
+  height: 48px;
+  z-index: 60;
+  pointer-events: none;
+}
+
+.inventory-carry .slot-texture {
+  inset: 3px;
 }
 
 .quick-access {

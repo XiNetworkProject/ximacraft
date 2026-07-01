@@ -5,6 +5,8 @@ export type InventorySlot = {
   count: number;
 };
 
+export const MAX_STACK_SIZE = 64;
+
 export class PlayerInventory {
   readonly slots: Array<InventorySlot | null> = Array.from({ length: 36 }, () => null);
   selectedHotbarIndex = 0;
@@ -71,29 +73,49 @@ export class PlayerInventory {
 
   setSlot(index: number, blockId: BlockId, count = 64): void {
     if (index < 0 || index >= this.slots.length) return;
-    this.slots[index] = { blockId, count };
+    this.slots[index] = { blockId, count: Math.max(1, Math.min(MAX_STACK_SIZE, count)) };
   }
 
   add(blockId: BlockId, count = 1): boolean {
-    for (const slot of this.slots) {
-      if (slot && slot.blockId === blockId && slot.count < 64) {
-        const accepted = Math.min(64 - slot.count, count);
+    const remaining = this.insertStack({ blockId, count });
+    return remaining === null;
+  }
+
+  insertStack(stack: InventorySlot, start = 0, end = this.slots.length): InventorySlot | null {
+    const carried = { blockId: stack.blockId, count: Math.max(0, stack.count) };
+    const from = Math.max(0, start);
+    const to = Math.min(this.slots.length, end);
+    for (let i = from; i < to && carried.count > 0; i += 1) {
+      const slot = this.slots[i];
+      if (slot && slot.blockId === carried.blockId && slot.count < MAX_STACK_SIZE) {
+        const accepted = Math.min(MAX_STACK_SIZE - slot.count, carried.count);
         slot.count += accepted;
-        count -= accepted;
-        if (count <= 0) return true;
+        carried.count -= accepted;
       }
     }
 
-    for (let i = 0; i < this.slots.length; i += 1) {
+    for (let i = from; i < to && carried.count > 0; i += 1) {
       if (!this.slots[i]) {
-        const accepted = Math.min(64, count);
-        this.slots[i] = { blockId, count: accepted };
-        count -= accepted;
-        if (count <= 0) return true;
+        const accepted = Math.min(MAX_STACK_SIZE, carried.count);
+        this.slots[i] = { blockId: carried.blockId, count: accepted };
+        carried.count -= accepted;
       }
     }
 
-    return count <= 0;
+    return carried.count > 0 ? carried : null;
+  }
+
+  moveSlotToRange(index: number, start: number, end: number): boolean {
+    const slot = this.slots[index];
+    if (!slot) return false;
+    this.slots[index] = null;
+    const remaining = this.insertStack(slot, start, end);
+    this.slots[index] = remaining;
+    return !remaining || remaining.count !== slot.count;
+  }
+
+  count(blockId: BlockId): number {
+    return this.slots.reduce((sum, slot) => sum + (slot?.blockId === blockId ? slot.count : 0), 0);
   }
 
   consumeSelected(isCreative: boolean): BlockId | null {
@@ -112,10 +134,7 @@ export class PlayerInventory {
   }
 
   remove(blockId: BlockId, count: number): boolean {
-    let available = 0;
-    for (const slot of this.slots) {
-      if (slot?.blockId === blockId) available += slot.count;
-    }
+    let available = this.count(blockId);
     if (available < count) return false;
 
     for (let i = 0; i < this.slots.length && count > 0; i += 1) {
@@ -135,7 +154,7 @@ export class PlayerInventory {
 
   restore(slots: Array<InventorySlot | null>, selectedHotbarIndex: number): void {
     for (let i = 0; i < this.slots.length; i += 1) {
-      this.slots[i] = slots[i] ? { ...slots[i]! } : null;
+      this.slots[i] = slots[i] ? { ...slots[i]!, count: Math.max(1, Math.min(MAX_STACK_SIZE, slots[i]!.count)) } : null;
     }
     this.select(selectedHotbarIndex);
   }
