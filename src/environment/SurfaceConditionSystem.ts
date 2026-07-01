@@ -4,6 +4,9 @@ import { EnvironmentSurfaceState, SurfaceMood } from "./EnvironmentState";
 import { DewSystem } from "./DewSystem";
 import { FrostSystem } from "./FrostSystem";
 import { SnowDepthSystem } from "./SnowDepthSystem";
+import { SnowBurialSystem } from "./SnowBurialSystem";
+import { SnowCoverRenderer } from "./SnowCoverRenderer";
+import { WetnessRenderer } from "./WetnessRenderer";
 
 export interface SurfaceConditionInput {
   x: number;
@@ -19,6 +22,9 @@ export class SurfaceConditionSystem {
   private readonly dew = new DewSystem();
   private readonly frost = new FrostSystem();
   private readonly snow = new SnowDepthSystem();
+  private readonly burial = new SnowBurialSystem();
+  private readonly snowCover = new SnowCoverRenderer();
+  private readonly wetnessVisual = new WetnessRenderer();
 
   resolve(input: SurfaceConditionInput): EnvironmentSurfaceState {
     const col = input.surfaceState.get(input.x, input.z);
@@ -57,20 +63,36 @@ export class SurfaceConditionSystem {
     });
     const puddles = Math.max(0, wetness - 0.72) / 0.28;
     const mud = Math.max(0, wetness - 0.48) * (snowDepth > 0.2 || ice > 0.2 ? 0.25 : 1);
+    const burial = this.burial.resolve(snowState, input.weather.weatherType === WeatherType.SNOW ? 0.15 : 0);
+    const cover = this.snowCover.resolve(snowState, burial, frost);
+    const wetVisual = this.wetnessVisual.resolve({ wetness, mud, puddles, ice, dew });
     return {
       wetness,
       mud,
       puddles,
-      snowDepth,
+      snowDepth: snowState.snowDepth,
       hailDepth,
       ice,
       frost,
       dew,
       compactedSnow: snowState.compacted,
       snowBurial: snowState.burial,
+      driftBias: snowState.driftBias,
+      grassBurial: burial.grassBurial,
+      flowerBurial: burial.flowerBurial,
+      bushCompression: burial.bushCompression,
+      roofSnow: cover.roofWhitening,
+      roadCompaction: burial.roadCompaction,
+      groundSnowWhitening: cover.groundWhitening,
+      vegetationSnowWhitening: cover.vegetationWhitening,
+      snowEdgeSoftness: cover.edgeSoftness,
+      wetDarkening: wetVisual.darkening,
+      wetGloss: wetVisual.gloss,
+      puddleAlpha: wetVisual.puddleAlpha,
+      mudTint: wetVisual.mudTint,
       surfaceTemperature,
       exposedToSky: input.exposedToSky,
-      mood: this.moodFor({ wetness, mud, snowDepth, hailDepth, ice, frost, dew, weatherType: input.weather.weatherType }),
+      mood: this.moodFor({ wetness, mud, snowDepth: snowState.snowDepth, hailDepth, ice, frost, dew, weatherType: input.weather.weatherType }),
     };
   }
 

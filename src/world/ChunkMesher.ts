@@ -69,25 +69,30 @@ export class ChunkMesher {
           if (blockId === BlockId.AIR) {
             continue;
           }
+          const worldX = originX + x;
+          const worldZ = originZ + z;
+          if (this.shouldHideForEnvironment(blockId, worldX, y, worldZ)) {
+            continue;
+          }
           const block = this.blockRegistry.get(blockId);
           const target = block.liquid ? water : block.transparent ? transparent : opaque;
 
           if (block.renderStyle === "cross") {
             const textureName = this.blockRegistry.getTextureForFace(blockId, "north");
-            this.pushCrossPlant(target, originX + x, y, originZ + z, textureName, blockId);
+            this.pushCrossPlant(target, worldX, y, worldZ, textureName, blockId);
             continue;
           }
 
           const shape = this.shapeFor(block);
-          const connections = isConnectedShape(shape) ? this.connectionStateFor(originX + x, y, originZ + z, shape) : NO_CONNECTIONS;
+          const connections = isConnectedShape(shape) ? this.connectionStateFor(worldX, y, worldZ, shape) : NO_CONNECTIONS;
           const boxes = BlockGeometryBuilder.boxesFor(shape, connections, block.renderHeight ?? 1);
           for (const box of boxes) {
             for (const face of FACES) {
-              if (!this.shouldRenderBoxFace(originX + x, y, originZ + z, box, face, blockId, !!(block.transparent || block.liquid))) {
+              if (!this.shouldRenderBoxFace(worldX, y, worldZ, box, face, blockId, !!(block.transparent || block.liquid))) {
                 continue;
               }
               const textureName = this.blockRegistry.getTextureForFace(blockId, face.name);
-              this.pushBoxFace(target, originX + x, y, originZ + z, box, face, textureName, blockId);
+              this.pushBoxFace(target, worldX, y, worldZ, box, face, textureName, blockId);
             }
           }
           continue;
@@ -126,6 +131,26 @@ export class ChunkMesher {
 
   private createBuffers(): MeshBuffers {
     return { positions: [], normals: [], uvs: [], colors: [], windWeights: [], waterDepths: [], indices: [] };
+  }
+
+  private shouldHideForEnvironment(blockId: BlockId, x: number, y: number, z: number): boolean {
+    const visual = this.world.environmentVisualState;
+    if (!visual) return false;
+
+    const seed = hash2(x * 0.071 + y * 0.011, z * 0.071 - y * 0.017);
+    if (this.isDeciduousLeaf(blockId) && visual.leafDrop > 0.35) {
+      const bareChance = Math.min(0.82, (visual.leafDrop - 0.32) * 0.92);
+      return seed < bareChance;
+    }
+
+    if (!isPlant(blockId) || blockId === BlockId.LILY_PAD || blockId === BlockId.MOSS_CARPET) {
+      return false;
+    }
+
+    const burial = this.plantBurial(blockId, x, z);
+    if (burial <= 0.42) return false;
+    const hideChance = this.isFlower(blockId) ? burial * 0.72 : burial * 0.46;
+    return seed < hideChance;
   }
 
   private shouldRenderFace(
@@ -321,10 +346,12 @@ export class ChunkMesher {
     const color = this.plantColor(blockId, x, z);
     const seed = hash2(x * 0.173, z * 0.173);
     const dims = this.plantDimensions(blockId, seed);
+    const burial = this.plantBurial(blockId, x, z);
     const cx = x + 0.5;
     const cz = z + 0.5;
-    const width = dims.width;
-    const height = dims.height;
+    const width = dims.width * (1 - burial * (blockId === BlockId.WILD_BUSH ? 0.28 : 0.18));
+    const height = Math.max(0.08, dims.height * (1 - burial * (this.isFlower(blockId) ? 0.78 : blockId === BlockId.WILD_BUSH ? 0.54 : 0.62)));
+    const wind = dims.wind * (1 - burial * 0.62);
     const planes: Array<{ nx: number; nz: number; corners: [number, number, number, number][] }> = [
       {
         nx: 0.707,
@@ -354,7 +381,7 @@ export class ChunkMesher {
         buffers.positions.push(cx + ox, y + oy, cz + oz);
         buffers.normals.push(plane.nx, 0.12, plane.nz);
         buffers.colors.push(color.r, color.g, color.b);
-        buffers.windWeights.push(cornerIndex >= 2 ? dims.wind : dims.wind * 0.22);
+        buffers.windWeights.push(cornerIndex >= 2 ? wind : wind * 0.22);
         buffers.waterDepths.push(0);
       }
       buffers.uvs.push(uv.u0, uv.v0, uv.u1, uv.v0, uv.u1, uv.v1, uv.u0, uv.v1);
@@ -479,10 +506,20 @@ export class ChunkMesher {
         blockId === BlockId.DIRT_PATH ? new THREE.Color(0x8a7258) :
         blockId === BlockId.GRAVEL_PATH ? new THREE.Color(0x8a8980) :
         new THREE.Color(0x8f918a);
-      return this.textureTint(tint, face === "top" ? 0.62 : 0.48).multiplyScalar(Math.max(shade, 0.9));
+      const color = this.textureTint(tint, face === "top" ? 0.62 : 0.48);
+      const visual = this.world.environmentVisualState;
+      if (visual && face === "top") {
+        color.lerp(new THREE.Color(0xcfd8da), visual.snowRoadCompaction * 0.62);
+        color.lerp(new THREE.Color(0x6f563e), visual.mudTint * 0.28);
+        if (visual.wetDarkening > 0.02) color.multiplyScalar(1 - visual.wetDarkening * 0.5);
+      }
+      return color.multiplyScalar(Math.max(shade, 0.9));
     }
     if (blockId === BlockId.SNOW_BLOCK || isSnowLayer(blockId)) {
       return new THREE.Color(face === "top" ? 0xd7dde0 : 0xc1c9cc).multiplyScalar(Math.max(shade, 0.9));
+    }
+    if (this.isRoofLike(blockId) || this.isFenceWallOrBeam(blockId)) {
+      return this.applyEnvironmentStructureTint(new THREE.Color(0xffffff), face, blockId).multiplyScalar(shade);
     }
     return new THREE.Color(0xffffff).multiplyScalar(shade);
   }
@@ -624,8 +661,9 @@ export class ChunkMesher {
     color.lerp(new THREE.Color(0x7fcf62), Math.max(0, visual.flowering - 0.35) * 0.08);
     color.lerp(new THREE.Color(0xd0b46a), visual.leafWarmth * 0.12);
     color.lerp(new THREE.Color(0xa7c392), (1 - visual.vegetation) * 0.36);
-    color.lerp(new THREE.Color(0xdce8e9), Math.max(visual.frost * 0.55, visual.snow * 0.72));
-    if (visual.wetness > 0.2) color.multiplyScalar(1 - visual.wetness * 0.08);
+    color.lerp(new THREE.Color(0x7a6249), visual.mudTint * 0.18);
+    color.lerp(new THREE.Color(0xdce8e9), Math.max(visual.frost * 0.55, visual.snowGround * 0.86, visual.snow * 0.52));
+    if (visual.wetness > 0.2 || visual.wetDarkening > 0.02) color.multiplyScalar(1 - visual.wetness * 0.08 - visual.wetDarkening * 0.45);
     return color;
   }
 
@@ -639,17 +677,26 @@ export class ChunkMesher {
       color.lerp(new THREE.Color(0x8c6b3b), visual.leafDrop * (0.16 + local * 0.14));
     }
     color.lerp(new THREE.Color(0x8fb888), (1 - visual.vegetation) * (coniferLike ? 0.12 : 0.26));
-    color.lerp(new THREE.Color(0xdce8e9), Math.max(visual.frost * 0.42, visual.snow * 0.62));
-    if (visual.wetness > 0.2) color.multiplyScalar(1 - visual.wetness * 0.05);
+    color.lerp(new THREE.Color(0xdce8e9), Math.max(visual.frost * 0.42, visual.snowVegetation * (coniferLike ? 0.78 : 0.58), visual.snow * 0.42));
+    if (visual.wetness > 0.2 || visual.wetDarkening > 0.02) color.multiplyScalar(1 - visual.wetness * 0.05 - visual.wetDarkening * 0.28);
     return color;
   }
 
   private plantColor(blockId: BlockId, x: number, z: number): THREE.Color {
     if (blockId === BlockId.DANDELION || blockId === BlockId.POPPY || blockId === BlockId.BLUE_FLOWER || blockId === BlockId.WHITE_FLOWER) {
-      return new THREE.Color(0xffffff);
+      const color = new THREE.Color(0xffffff);
+      const visual = this.world.environmentVisualState;
+      if (visual) {
+        color.lerp(new THREE.Color(0xdce6e7), Math.max(visual.frost * 0.42, visual.snowVegetation * 0.9));
+        if (visual.wetDarkening > 0.02) color.multiplyScalar(1 - visual.wetDarkening * 0.18);
+      }
+      return color;
     }
     if (blockId === BlockId.LILY_PAD || blockId === BlockId.MOSS_CARPET) {
-      return this.textureTint(this.foliageTint(x, z, false), 0.72);
+      const color = this.textureTint(this.foliageTint(x, z, false), 0.72);
+      const visual = this.world.environmentVisualState;
+      if (visual) color.lerp(new THREE.Color(0xd6e2e4), Math.max(visual.frost * 0.34, visual.snowGround * 0.35));
+      return color;
     }
     if (blockId === BlockId.ANIMAL_TRACKS) {
       return new THREE.Color(0x8b7a62);
@@ -657,7 +704,13 @@ export class ChunkMesher {
     const base = blockId === BlockId.FERN || blockId === BlockId.WILD_BUSH
       ? this.foliageTint(x, z, false)
       : this.grassTint(x, z);
-    return this.textureTint(base, blockId === BlockId.WILD_BUSH ? 0.74 : 0.82);
+    const color = this.textureTint(base, blockId === BlockId.WILD_BUSH ? 0.74 : 0.82);
+    const visual = this.world.environmentVisualState;
+    if (visual) {
+      color.lerp(new THREE.Color(0xdce8e9), Math.max(visual.frost * 0.48, visual.snowVegetation * (blockId === BlockId.WILD_BUSH ? 0.58 : 0.74)));
+      if (visual.wetDarkening > 0.02) color.multiplyScalar(1 - visual.wetDarkening * 0.28);
+    }
+    return color;
   }
 
   private plantDimensions(blockId: BlockId, seed: number): { width: number; height: number; wind: number } {
@@ -681,8 +734,62 @@ export class ChunkMesher {
     }
   }
 
+  private plantBurial(blockId: BlockId, x: number, z: number): number {
+    const visual = this.world.environmentVisualState;
+    if (!visual) return 0;
+    const local = hash2(x * 0.097 + 5.1, z * 0.097 - 3.4);
+    const base = this.isFlower(blockId)
+      ? visual.snowVegetation * 1.08
+      : blockId === BlockId.WILD_BUSH || blockId === BlockId.FERN
+        ? visual.snowVegetation * 0.82
+        : visual.snowVegetation * 0.96;
+    return Math.min(1, Math.max(0, base + visual.frost * 0.1 + (local - 0.5) * visual.snowEdgeSoftness * 0.22));
+  }
+
+  private isFlower(blockId: BlockId): boolean {
+    return blockId === BlockId.DANDELION || blockId === BlockId.POPPY || blockId === BlockId.BLUE_FLOWER || blockId === BlockId.WHITE_FLOWER;
+  }
+
+  private isDeciduousLeaf(blockId: BlockId): boolean {
+    return blockId === BlockId.OAK_LEAVES || blockId === BlockId.BIRCH_LEAVES || blockId === BlockId.DARK_OAK_LEAVES;
+  }
+
+  private isRoofLike(blockId: BlockId): boolean {
+    return blockId === BlockId.WEATHERED_ROOF_NORTH ||
+      blockId === BlockId.WEATHERED_ROOF_SOUTH ||
+      blockId === BlockId.WEATHERED_ROOF_EAST ||
+      blockId === BlockId.WEATHERED_ROOF_WEST;
+  }
+
+  private isFenceWallOrBeam(blockId: BlockId): boolean {
+    return blockId === BlockId.OAK_FENCE ||
+      blockId === BlockId.COBBLESTONE_WALL ||
+      blockId === BlockId.MOSSY_COBBLESTONE_WALL ||
+      blockId === BlockId.STONE_BRICK_WALL ||
+      blockId === BlockId.WEATHERED_BEAM ||
+      blockId === BlockId.WEATHERED_BEAM_X ||
+      blockId === BlockId.WEATHERED_BEAM_Z ||
+      blockId === BlockId.OAK_SLAB ||
+      blockId === BlockId.OAK_SLAB_TOP ||
+      blockId === BlockId.COBBLESTONE_SLAB ||
+      blockId === BlockId.COBBLESTONE_SLAB_TOP ||
+      blockId === BlockId.STONE_BRICK_SLAB ||
+      blockId === BlockId.STONE_BRICK_SLAB_TOP;
+  }
+
+  private applyEnvironmentStructureTint(color: THREE.Color, face: BlockFace, blockId: BlockId): THREE.Color {
+    const visual = this.world.environmentVisualState;
+    if (!visual) return color;
+    const topWeight = face === "top" ? 1 : this.isRoofLike(blockId) ? 0.42 : 0.24;
+    const snow = this.isRoofLike(blockId) ? visual.snowRoof : Math.max(visual.snowGround * 0.42, visual.snowVegetation * 0.26);
+    color.lerp(new THREE.Color(0xd7e1e2), snow * topWeight);
+    color.lerp(new THREE.Color(0x6e5a43), visual.mudTint * (face === "bottom" ? 0.08 : 0.16));
+    if (visual.wetDarkening > 0.02) color.multiplyScalar(1 - visual.wetDarkening * (face === "top" ? 0.34 : 0.2));
+    return color;
+  }
+
   private blockWindWeight(blockId: BlockId): number {
-    if (blockId === BlockId.OAK_LEAVES || blockId === BlockId.BIRCH_LEAVES) return 0.16;
+    if (blockId === BlockId.OAK_LEAVES || blockId === BlockId.BIRCH_LEAVES || blockId === BlockId.SPRUCE_LEAVES || blockId === BlockId.DARK_OAK_LEAVES) return 0.16;
     if (blockId === BlockId.LILY_PAD || blockId === BlockId.MOSS_CARPET || blockId === BlockId.ANIMAL_TRACKS || blockId === BlockId.CAMPFIRE) return 0;
     if (isPlant(blockId)) return 0.85;
     return 0;

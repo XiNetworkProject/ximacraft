@@ -329,13 +329,35 @@ console.log("\n[environment] seasons, comfort, dew/frost and fog are coherent");
   const dew = surface.resolve({ x: 0, z: 0, weather: { ...frostSample, temperature: 7, humidity: 0.92, windSpeed: 0.4 }, dewPoint: dewPointC(7, 0.92), dayFactor: 0.08, exposedToSky: 1, surfaceState });
   check("cold saturated calm night creates frost", frost.frost > 0.1 && frost.mood === "frost", `frost=${frost.frost.toFixed(2)} mood=${frost.mood}`);
   check("mild saturated calm night creates dew", dew.dew > 0.1 && dew.mood === "dew", `dew=${dew.dew.toFixed(2)} mood=${dew.mood}`);
+  const snowyColumn = surfaceState.ensure(3, 4, 0);
+  snowyColumn.snowDepth = 0.58;
+  snowyColumn.wetness = 0.82;
+  const snowySurface = surface.resolve({
+    x: 3,
+    z: 4,
+    weather: { ...frostSample, temperature: -4, humidity: 0.88, precipitation: 0.65, weatherType: WeatherType.SNOW, windSpeed: 9 },
+    dewPoint: dewPointC(-4, 0.88),
+    dayFactor: 0.35,
+    exposedToSky: 0.9,
+    surfaceState,
+  });
+  check(
+    "snow surface exposes cover, burial, compacted road and wet visual channels",
+    snowySurface.groundSnowWhitening > 0.45 &&
+      snowySurface.vegetationSnowWhitening > 0.45 &&
+      snowySurface.flowerBurial > snowySurface.grassBurial &&
+      snowySurface.roadCompaction > 0.05 &&
+      snowySurface.wetDarkening > 0.05,
+    `ground=${snowySurface.groundSnowWhitening.toFixed(2)} veg=${snowySurface.vegetationSnowWhitening.toFixed(2)} flower=${snowySurface.flowerBurial.toFixed(2)} road=${snowySurface.roadCompaction.toFixed(2)} wet=${snowySurface.wetDarkening.toFixed(2)}`,
+  );
 
   const phenology = new WorldPhenologySystem();
   const winter: SeasonState = { season: "winter", dayOfYear: 80, progress: 0.35, temperatureOffset: -6, vegetation: 0.28, wildlife: 0.4, insectActivity: 0.03, leafWarmth: 0.08, snowBias: 0.78 };
   const autumn: SeasonState = { season: "autumn", dayOfYear: 60, progress: 0.6, temperatureOffset: -1, vegetation: 0.72, wildlife: 0.78, insectActivity: 0.38, leafWarmth: 0.72, snowBias: 0.08 };
-  const winterVisual = phenology.resolve(winter, { ...frost, snowDepth: 0.4 }, -3, 0.8, 0.3);
+  const winterVisual = phenology.resolve(winter, snowySurface, -3, 0.8, 0.3);
   const autumnVisual = phenology.resolve(autumn, dew, 11, 0.65, 0.55);
   check("winter visual state mutes vegetation and raises snow/frost", winterVisual.vegetation < 0.4 && winterVisual.snow > 0.4 && winterVisual.frost > 0.1);
+  check("winter visual state drives mesh snow and deciduous leaf drop", winterVisual.snowGround > 0.45 && winterVisual.snowVegetation > 0.45 && winterVisual.leafDrop > 0.5);
   check("autumn visual state warms leaves without forcing full snow", autumnVisual.leafWarmth > 0.65 && autumnVisual.snow < 0.2);
 
   const fogA = new FogBankSystem();

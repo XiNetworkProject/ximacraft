@@ -1290,7 +1290,13 @@ export class Game {
       Math.round(visual.dryness * 5),
       Math.round(visual.frost * 4),
       Math.round(visual.snow * 4),
+      Math.round(visual.snowGround * 5),
+      Math.round(visual.snowVegetation * 5),
+      Math.round(visual.snowRoof * 5),
+      Math.round(visual.snowRoadCompaction * 5),
       Math.round(visual.wetness * 3),
+      Math.round(visual.wetDarkening * 5),
+      Math.round(visual.mudTint * 5),
     ].join(":");
     if (key === this.lastEnvironmentVisualKey) return;
     this.lastEnvironmentVisualKey = key;
