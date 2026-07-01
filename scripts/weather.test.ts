@@ -9,6 +9,7 @@
  *  - la population de nuages est persistante (pas de top-N, dissipation lente).
  */
 
+import * as THREE from "three";
 import { WeatherEngine } from "../src/weather/WeatherEngine";
 import { WeatherScenarioDirector } from "../src/weather/scene/WeatherScenarioDirector";
 import { PrecipitationKind, PrecipitationState, SkyState, WeatherScenario } from "../src/weather/scene/WeatherScene";
@@ -34,6 +35,9 @@ import { WeatherRadarHistory } from "../src/weather/map/WeatherRadarHistory";
 import { FogDensitySampler } from "../src/render/weather/fog/FogDensitySampler";
 import type { FogBankRenderSample } from "../src/environment/FogBankSystem";
 import { FogLodSystem } from "../src/render/weather/fog/FogLodSystem";
+import { EntityAssetManager } from "../src/living/EntityAssetManager";
+import { EntityAnimationController } from "../src/living/EntityAnimationController";
+import { SpatialAudioMixer } from "../src/assets/SpatialAudioMixer";
 
 let passed = 0;
 let failed = 0;
@@ -454,6 +458,37 @@ console.log("\n[living] micro-biomes and rare POI are seed-deterministic");
   check("micro-biome scan produces varied natural pockets", foundMicroBiomes.size >= 4, `types=${[...foundMicroBiomes].join(",")}`);
   check("rare POI anchors repeat exactly for the same seed", poiDeterministic);
   check("rare POI anchors exist in a broad deterministic scan", sawPoi);
+}
+
+// ============================================================================
+console.log("\n[living] wildlife models, animation and spatial cues are real systems");
+{
+  const assets = new EntityAssetManager();
+  const rabbit = assets.assetFor("rabbit");
+  const deer = assets.assetFor("deer");
+  const bird = assets.assetFor("bird");
+  const rabbitVertices = rabbit.geometry.getAttribute("position").count;
+  const deerVertices = deer.geometry.getAttribute("position").count;
+  const birdVertices = bird.geometry.getAttribute("position").count;
+  check("wildlife assets are multi-part procedural silhouettes, not single cubes", rabbit.definition.parts.length >= 6 && deer.definition.parts.length >= 8 && bird.definition.parts.length >= 5);
+  check("wildlife geometries have rich vertex silhouettes", rabbitVertices > 120 && deerVertices > 160 && birdVertices > 40, `rabbit=${rabbitVertices} deer=${deerVertices} bird=${birdVertices}`);
+
+  const animation = new EntityAnimationController();
+  const butterflyA = animation.pose({ species: "butterfly", mode: "fly", age: 0, phase: 0, visible: 1, heading: 0, baseScale: new THREE.Vector3(1, 1, 1) });
+  const butterflyB = animation.pose({ species: "butterfly", mode: "fly", age: 0.2, phase: 0, visible: 1, heading: 0, baseScale: new THREE.Vector3(1, 1, 1) });
+  const frog = animation.pose({ species: "frog", mode: "flee", age: 0.2, phase: 0, visible: 1, heading: 0, baseScale: new THREE.Vector3(1, 1, 1) });
+  check("winged wildlife animation changes scale/roll over time", Math.abs(butterflyA.scale.x - butterflyB.scale.x) > 0.01 || Math.abs(butterflyA.rotation.z - butterflyB.rotation.z) > 0.01);
+  check("ground wildlife animation exposes hop/bob state", frog.bob > 0);
+
+  const mixer = new SpatialAudioMixer();
+  mixer.setListener({ x: 0, y: 64, z: 0 });
+  mixer.emit({ id: "wildlife.frog.wet", x: 12, y: 65, z: 5, volume: 0.2, radius: 64 });
+  mixer.emit({ id: "wildlife.bird.distant", x: -24, y: 72, z: -28, volume: 0.15, radius: 96 });
+  const events = mixer.consume();
+  check("spatial wildlife mixer queues distinct local audio events", events.length === 2 && events[0].id.includes("frog") && events[1].id.includes("bird"));
+  check("spatial wildlife mixer consume clears the event queue", mixer.consume().length === 0);
+  assets.dispose();
+  mixer.dispose();
 }
 
 // ============================================================================

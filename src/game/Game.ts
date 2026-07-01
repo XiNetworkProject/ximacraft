@@ -54,9 +54,11 @@ import { LocalWeatherFieldTexture } from "../render/weather/LocalWeatherFieldTex
 import { SeasonSystem } from "../living/SeasonSystem";
 import { LivingWorldSystem } from "../living/LivingWorldSystem";
 import { AmbientBiomeAudioSystem } from "../living/AmbientBiomeAudioSystem";
+import { WildlifeAudioSystem } from "../living/WildlifeAudioSystem";
 import { WorldMemorySystem } from "../living/WorldMemorySystem";
 import { EnvironmentDirector } from "../environment/EnvironmentDirector";
 import type { EnvironmentState } from "../environment/EnvironmentState";
+import { SpatialAudioMixer } from "../assets/SpatialAudioMixer";
 import { WeatherMapUI } from "../ui/weather/WeatherMapUI";
 import { DebugOverlay } from "../ui/DebugOverlay";
 import { HotbarUI } from "../ui/HotbarUI";
@@ -130,6 +132,8 @@ export class Game {
   private readonly vegetationWind = new VegetationWind();
   private readonly ambientLife: AmbientLifeSystem;
   private readonly livingWorld: LivingWorldSystem;
+  private readonly spatialAudio = new SpatialAudioMixer();
+  private readonly wildlifeAudio = new WildlifeAudioSystem(this.spatialAudio);
   private readonly biomeAmbience = new AmbientBiomeAudioSystem();
   private readonly worldMemory = new WorldMemorySystem();
   // Perspective aérienne (profondeur atmosphérique).
@@ -295,6 +299,7 @@ export class Game {
       void this.gameAudio.unlock();
       void this.weatherAudio.unlock();
       void this.biomeAmbience.unlock();
+      void this.spatialAudio.unlock();
       if (this.started && !this.isUiBlocking()) {
         this.input.requestPointerLock();
       }
@@ -350,6 +355,8 @@ export class Game {
       await this.waitForAssets();
       void this.gameAudio.unlock();
       void this.weatherAudio.unlock();
+      void this.biomeAmbience.unlock();
+      void this.spatialAudio.unlock();
       this.loading("seed", 0.45);
       this.currentWorldId = this.createWorldId(options.name);
       this.currentWorldName = options.name.trim() || "Nouveau monde";
@@ -385,6 +392,8 @@ export class Game {
       await this.waitForAssets();
       void this.gameAudio.unlock();
       void this.weatherAudio.unlock();
+      void this.biomeAmbience.unlock();
+      void this.spatialAudio.unlock();
       this.loading("seed", 0.35);
       const data = await this.saveManager.load(worldId);
       if (!data) {
@@ -723,6 +732,7 @@ export class Game {
       delta,
     );
     this.biomeAmbience.update(world, this.player.position, sample, this.time.ticks, season, delta, environment);
+    this.wildlifeAudio.update(delta, environment, this.player.position);
     this.updateTargetBlock();
 
     if (controlsEnabled) {
@@ -1424,6 +1434,7 @@ export class Game {
     this.worldSnow?.dispose();
     this.worldSnow = null;
     this.livingWorld.clear();
+    this.spatialAudio.consume();
     this.chunks?.dispose();
     this.entities?.dispose();
     this.chunks = null;

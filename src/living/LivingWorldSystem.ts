@@ -6,6 +6,8 @@ import { World } from "../world/World";
 import { BlockId } from "../world/BlockTypes";
 import { SeasonState } from "./SeasonSystem";
 import { LivingWorldDebugState, WildlifeMode, WildlifeSpecies } from "./LivingWorldTypes";
+import { EntityAnimationController } from "./EntityAnimationController";
+import { EntityAssetManager } from "./EntityAssetManager";
 
 type Quality = "low" | "balanced" | "high";
 
@@ -15,7 +17,6 @@ interface SpeciesConfig {
   range: number;
   speed: number;
   scale: THREE.Vector3;
-  color: number;
   altitude: "ground" | "air" | "water" | "canopy";
 }
 
@@ -36,20 +37,21 @@ interface Animal {
 }
 
 const SPECIES: Record<WildlifeSpecies, SpeciesConfig> = {
-  bird: { max: 42, cellSize: 42, range: 150, speed: 6.5, scale: new THREE.Vector3(0.42, 0.16, 0.24), color: 0x3f5260, altitude: "air" },
-  butterfly: { max: 48, cellSize: 20, range: 70, speed: 1.8, scale: new THREE.Vector3(0.22, 0.05, 0.16), color: 0xf3c24c, altitude: "air" },
-  dragonfly: { max: 32, cellSize: 24, range: 90, speed: 3.3, scale: new THREE.Vector3(0.34, 0.035, 0.08), color: 0x6bd3cf, altitude: "air" },
-  firefly: { max: 42, cellSize: 22, range: 82, speed: 1.2, scale: new THREE.Vector3(0.08, 0.08, 0.08), color: 0xf9ee7a, altitude: "air" },
-  rabbit: { max: 24, cellSize: 32, range: 94, speed: 3.6, scale: new THREE.Vector3(0.35, 0.28, 0.48), color: 0xb89a74, altitude: "ground" },
-  deer: { max: 8, cellSize: 78, range: 155, speed: 5.2, scale: new THREE.Vector3(0.58, 1.1, 1), color: 0x8b5d35, altitude: "ground" },
-  fish: { max: 56, cellSize: 24, range: 110, speed: 2.1, scale: new THREE.Vector3(0.32, 0.13, 0.62), color: 0x5aa6c8, altitude: "water" },
-  frog: { max: 18, cellSize: 28, range: 74, speed: 2.2, scale: new THREE.Vector3(0.28, 0.18, 0.32), color: 0x4d9b46, altitude: "ground" },
-  bat: { max: 28, cellSize: 34, range: 105, speed: 4.4, scale: new THREE.Vector3(0.34, 0.1, 0.2), color: 0x1f242d, altitude: "canopy" },
+  bird: { max: 42, cellSize: 42, range: 150, speed: 6.5, scale: new THREE.Vector3(0.42, 0.16, 0.24), altitude: "air" },
+  butterfly: { max: 48, cellSize: 20, range: 70, speed: 1.8, scale: new THREE.Vector3(0.22, 0.05, 0.16), altitude: "air" },
+  dragonfly: { max: 32, cellSize: 24, range: 90, speed: 3.3, scale: new THREE.Vector3(0.34, 0.035, 0.08), altitude: "air" },
+  firefly: { max: 42, cellSize: 22, range: 82, speed: 1.2, scale: new THREE.Vector3(0.08, 0.08, 0.08), altitude: "air" },
+  rabbit: { max: 24, cellSize: 32, range: 94, speed: 3.6, scale: new THREE.Vector3(0.35, 0.28, 0.48), altitude: "ground" },
+  deer: { max: 8, cellSize: 78, range: 155, speed: 5.2, scale: new THREE.Vector3(0.58, 1.1, 1), altitude: "ground" },
+  fish: { max: 56, cellSize: 24, range: 110, speed: 2.1, scale: new THREE.Vector3(0.32, 0.13, 0.62), altitude: "water" },
+  frog: { max: 18, cellSize: 28, range: 74, speed: 2.2, scale: new THREE.Vector3(0.28, 0.18, 0.32), altitude: "ground" },
+  bat: { max: 28, cellSize: 34, range: 105, speed: 4.4, scale: new THREE.Vector3(0.34, 0.1, 0.2), altitude: "canopy" },
 };
 
 export class LivingWorldSystem {
   private readonly meshes = new Map<WildlifeSpecies, THREE.InstancedMesh>();
-  private readonly materials = new Map<WildlifeSpecies, THREE.MeshStandardMaterial>();
+  private readonly assets = new EntityAssetManager();
+  private readonly animation = new EntityAnimationController();
   private readonly animals = new Map<string, Animal>();
   private readonly dummy = new THREE.Object3D();
   private readonly hiddenMatrix = new THREE.Matrix4().makeScale(0, 0, 0);
@@ -69,21 +71,14 @@ export class LivingWorldSystem {
   constructor(private readonly scene: THREE.Scene) {
     for (const species of Object.keys(SPECIES) as WildlifeSpecies[]) {
       const config = SPECIES[species];
-      const material = new THREE.MeshStandardMaterial({
-        color: config.color,
-        roughness: 0.75,
-        metalness: 0,
-        emissive: species === "firefly" ? new THREE.Color(0xd9cf55) : new THREE.Color(0x000000),
-        emissiveIntensity: species === "firefly" ? 1.8 : 0,
-      });
-      const mesh = new THREE.InstancedMesh(this.geometryFor(species), material, config.max);
+      const asset = this.assets.assetFor(species);
+      const mesh = new THREE.InstancedMesh(asset.geometry, asset.material, config.max);
       mesh.frustumCulled = false;
       mesh.castShadow = species !== "fish" && species !== "firefly";
       mesh.receiveShadow = false;
       for (let i = 0; i < config.max; i += 1) mesh.setMatrixAt(i, this.hiddenMatrix);
       mesh.instanceMatrix.needsUpdate = true;
       this.meshes.set(species, mesh);
-      this.materials.set(species, material);
       this.scene.add(mesh);
     }
   }
@@ -163,17 +158,15 @@ export class LivingWorldSystem {
       .filter((key) => state.species[key] > 0)
       .map((key) => `${key}=${state.species[key]}`)
       .join(" ");
-    return `LivingWorld enabled=${state.enabled} active=${state.activeAnimals} visible=${state.visibleAnimals} ${species || "no visible animals"} ambience=${state.ambience}`;
+    return `LivingWorld enabled=${state.enabled} active=${state.activeAnimals} visible=${state.visibleAnimals} ${species || "no visible animals"} ambience=${state.ambience} models=${this.assets.debugProfile()}`;
   }
 
   dispose(): void {
     for (const mesh of this.meshes.values()) {
       this.scene.remove(mesh);
-      mesh.geometry.dispose();
     }
-    for (const material of this.materials.values()) material.dispose();
     this.meshes.clear();
-    this.materials.clear();
+    this.assets.dispose();
     this.animals.clear();
   }
 
@@ -303,17 +296,19 @@ export class LivingWorldSystem {
   private writeInstance(animal: Animal): void {
     const config = SPECIES[animal.species];
     const heading = Math.atan2(animal.velocity.x, animal.velocity.z);
-    const flap = animal.species === "bird" || animal.species === "bat" || animal.species === "butterfly" || animal.species === "dragonfly"
-      ? 1 + Math.sin(animal.age * (animal.species === "dragonfly" ? 34 : 12) + animal.phase) * 0.16
-      : 1;
-    const pulse = animal.species === "firefly" ? 0.45 + Math.max(0, Math.sin(animal.age * 3.4 + animal.phase)) * 0.8 : 1;
+    const pose = this.animation.pose({
+      species: animal.species,
+      mode: animal.mode,
+      age: animal.age,
+      phase: animal.phase,
+      visible: animal.visible,
+      heading,
+      baseScale: config.scale,
+    });
     this.dummy.position.copy(animal.position);
-    this.dummy.rotation.set(0, heading, animal.species === "butterfly" ? Math.sin(animal.age * 9 + animal.phase) * 0.25 : 0);
-    this.dummy.scale.set(
-      config.scale.x * animal.visible * flap * pulse,
-      config.scale.y * animal.visible * pulse,
-      config.scale.z * animal.visible,
-    );
+    this.dummy.position.y += pose.bob;
+    this.dummy.rotation.copy(pose.rotation);
+    this.dummy.scale.copy(pose.scale);
     this.dummy.updateMatrix();
     this.meshes.get(animal.species)!.setMatrixAt(animal.slot, this.dummy.matrix);
   }
@@ -444,23 +439,6 @@ export class LivingWorldSystem {
 
   private cellRng(species: WildlifeSpecies, cx: number, cz: number): () => number {
     return makeRng((this.seed ^ hashString(species) ^ Math.imul(cx, 374761393) ^ Math.imul(cz, 668265263)) >>> 0);
-  }
-
-  private geometryFor(species: WildlifeSpecies): THREE.BufferGeometry {
-    if (species === "firefly") return new THREE.SphereGeometry(1, 8, 6);
-    if (species === "fish") return new THREE.ConeGeometry(0.7, 1.6, 6).rotateX(Math.PI * 0.5);
-    if (species === "bird" || species === "bat" || species === "butterfly" || species === "dragonfly") {
-      const geometry = new THREE.BufferGeometry();
-      const positions = new Float32Array([
-        0, 0, 0.55, -0.85, 0, -0.35, 0, 0.08, -0.15,
-        0, 0, 0.55, 0.85, 0, -0.35, 0, 0.08, -0.15,
-        0, -0.05, -0.45, 0, 0.08, -0.15, 0, 0.03, 0.55,
-      ]);
-      geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-      geometry.computeVertexNormals();
-      return geometry;
-    }
-    return new THREE.BoxGeometry(1, 1, 1);
   }
 }
 
