@@ -640,7 +640,7 @@ export class Game {
       observerY: this.player.position.y,
       masses: this.convectiveClouds.masses,
     });
-    this.waterWaves.update(delta, sample.windX, sample.windZ);
+    this.waterWaves.update(delta, sample.windX, sample.windZ, sample.precipitation);
     this.vegetationWind.update(delta, sample.windX, sample.windZ);
     this.ambientLife.update(delta, sample, camera, world, dayFactor, this.player.position, this.player.velocity);
     this.livingWorld.update(delta, world, this.player.position, sample, this.time.ticks, season, this.qualityPreset);

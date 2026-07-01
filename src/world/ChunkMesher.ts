@@ -9,6 +9,7 @@ import { World } from "./World";
 import { BlockConnectionState, NO_CONNECTIONS } from "./BlockConnections";
 import { BlockGeometryBuilder, GeometryBox } from "./BlockGeometryBuilder";
 import { BlockShape, isConnectedShape } from "./blockstate/BlockShape";
+import { LightingEngine } from "./LightingEngine";
 
 type FaceBuild = {
   name: BlockFace;
@@ -49,13 +50,18 @@ export type ChunkMeshResult = {
 };
 
 export class ChunkMesher {
+  private readonly lighting: LightingEngine;
+
   constructor(
     private readonly world: World,
     private readonly blockRegistry: BlockRegistry,
     private readonly atlas: TextureAtlas,
-  ) {}
+  ) {
+    this.lighting = new LightingEngine(blockRegistry);
+  }
 
   build(chunk: Chunk): ChunkMeshResult {
+    this.lighting.clearCache();
     const opaque = this.createBuffers();
     const transparent = this.createBuffers();
     const water = this.createBuffers();
@@ -251,7 +257,7 @@ export class ChunkMesher {
   ): void {
     const baseIndex = buffers.positions.length / 3;
     const uv = this.atlas.getUv(textureName);
-    const color = this.faceColor(blockId, face.name, x, y, z);
+    const color = this.applyLocalLight(this.faceColor(blockId, face.name, x, y, z), blockId, x, y, z);
     const liquid = blockId === BlockId.WATER;
     const depth = liquid ? this.waterDepthAt(x, y, z) : 0;
     const windWeight = this.blockWindWeight(blockId);
@@ -298,7 +304,7 @@ export class ChunkMesher {
   ): void {
     const baseIndex = buffers.positions.length / 3;
     const uv = this.atlas.getUv(textureName);
-    const color = this.faceColor(blockId, face.name, x, y, z);
+    const color = this.applyLocalLight(this.faceColor(blockId, face.name, x, y, z), blockId, x, y, z);
     const liquid = blockId === BlockId.WATER;
     const depth = liquid ? this.waterDepthAt(x, y, z) : 0;
     const waterLevel = liquid ? 0.88 : renderHeight;
@@ -343,7 +349,7 @@ export class ChunkMesher {
     blockId: BlockId,
   ): void {
     const uv = this.atlas.getUv(textureName);
-    const color = this.plantColor(blockId, x, z);
+    const color = this.applyLocalLight(this.plantColor(blockId, x, z), blockId, x, y, z);
     const seed = hash2(x * 0.173, z * 0.173);
     const dims = this.plantDimensions(blockId, seed);
     const burial = this.plantBurial(blockId, x, z);
@@ -522,6 +528,25 @@ export class ChunkMesher {
       return this.applyEnvironmentStructureTint(new THREE.Color(0xffffff), face, blockId).multiplyScalar(shade);
     }
     return new THREE.Color(0xffffff).multiplyScalar(shade);
+  }
+
+  private applyLocalLight(color: THREE.Color, blockId: BlockId, x: number, y: number, z: number): THREE.Color {
+    const emission = this.lighting.getEmission(blockId);
+    const sample = this.lighting.sampleLocalLight(this.world, x + 0.5, y + 0.5, z + 0.5, emission > 0 ? 5 : 7);
+    const sampledIntensity = blockId === BlockId.WATER ? sample.intensity * 0.18 : sample.intensity;
+    const localStrength = Math.min(0.42, sampledIntensity * 0.3);
+    const selfStrength = Math.min(0.34, (emission / 15) * 0.28);
+    if (localStrength <= 0.001 && selfStrength <= 0.001) return color;
+
+    const tintStrength = Math.min(0.28, localStrength * 0.58 + selfStrength * 0.5);
+    const brightness = 1 + Math.min(0.46, localStrength + selfStrength);
+    const lightColor = new THREE.Color(sample.r, sample.g, sample.b);
+    const lit = color.clone().lerp(lightColor, tintStrength).multiplyScalar(brightness);
+    const maxChannel = blockId === BlockId.WATER ? 1.18 : 1.42;
+    lit.r = Math.min(maxChannel, lit.r);
+    lit.g = Math.min(maxChannel, lit.g);
+    lit.b = Math.min(maxChannel, lit.b);
+    return lit;
   }
 
   private faceShade(face: BlockFace): number {

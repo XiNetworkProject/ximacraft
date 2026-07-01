@@ -45,6 +45,8 @@ import { WorldMemorySystem } from "../src/living/WorldMemorySystem";
 import { World } from "../src/world/World";
 import { BlockRegistry } from "../src/world/BlockRegistry";
 import { buildWorldMapData } from "../src/ui/WorldMapJournalUI";
+import { LightingEngine } from "../src/world/LightingEngine";
+import { WaterWaves } from "../src/render/weather/WaterWaves";
 
 let passed = 0;
 let failed = 0;
@@ -934,6 +936,33 @@ console.log("\n[hydrology] flow network is seed-deterministic and coupled to car
   check("river columns were actually found in a broad scan", channelSamples > 5, `samples=${channelSamples}`);
   check("river beds are carved at or below the rough terrain", channelSamples > 0 && carvedChannels === channelSamples, `carved=${carvedChannels}/${channelSamples}`);
   check("river channels hold water at or above the bed", channelSamples > 0 && floodedChannels === channelSamples, `flooded=${floodedChannels}/${channelSamples}`);
+}
+
+// ============================================================================
+console.log("\n[render] voxel lighting and water runtime state are deterministic");
+{
+  const registry = new BlockRegistry();
+  const world = new World("render-lighting-test", registry);
+  world.ensureChunk(0, 0);
+  world.setBlock(0, 72, 0, BlockId.GLOWSTONE, false);
+  world.setBlock(4, 72, 0, BlockId.SEA_LANTERN, false);
+
+  const lighting = new LightingEngine(registry);
+  const nearGlow = lighting.sampleLocalLight(world, 1, 72, 0, 8);
+  const farGlow = lighting.sampleLocalLight(world, 12, 72, 0, 8);
+  const cachedGlow = lighting.sampleLocalLight(world, 1, 72, 0, 8);
+  check("local voxel light is produced near emissive blocks", nearGlow.intensity > 0.35 && nearGlow.sources >= 1, `intensity=${nearGlow.intensity.toFixed(2)} sources=${nearGlow.sources}`);
+  check("local voxel light attenuates with distance", nearGlow.intensity > farGlow.intensity, `near=${nearGlow.intensity.toFixed(2)} far=${farGlow.intensity.toFixed(2)}`);
+  check("light cache returns deterministic samples", JSON.stringify(nearGlow) === JSON.stringify(cachedGlow));
+
+  const water = new WaterWaves();
+  water.update(1, 12, 0, 0.82);
+  const rainAfterStorm = water.uniforms.uWaterRain.value;
+  const chopAfterWind = water.uniforms.uWaterChop.value;
+  water.update(1, 0, 0, 0);
+  check("water shader receives rain intensity smoothly", rainAfterStorm > 0.75, `rain=${rainAfterStorm.toFixed(2)}`);
+  check("water shader increases chop under stronger wind", chopAfterWind > 0.1, `chop=${chopAfterWind.toFixed(3)}`);
+  check("water shader keeps a normalized flow vector", Math.abs(water.uniforms.uWaterFlow.value.length() - 1) < 0.001);
 }
 
 // ============================================================================

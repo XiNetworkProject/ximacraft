@@ -21,10 +21,11 @@ export class TextureManager {
       map: this.atlas.texture,
       side: THREE.FrontSide,
       vertexColors: true,
-      roughness: 0.78,
+      roughness: 0.86,
       metalness: 0,
       emissive: 0xffffff,
-      emissiveIntensity: 0.06,
+      emissiveIntensity: 0.045,
+      envMapIntensity: 0.32,
     });
 
     this.transparentMaterial = new THREE.MeshStandardMaterial({
@@ -35,10 +36,11 @@ export class TextureManager {
       alphaTest: 0.28,
       depthWrite: true,
       vertexColors: true,
-      roughness: 0.74,
+      roughness: 0.82,
       metalness: 0,
       emissive: 0xffffff,
-      emissiveIntensity: 0.09,
+      emissiveIntensity: 0.055,
+      envMapIntensity: 0.22,
     });
 
     this.waterMaterial = new THREE.MeshPhysicalMaterial({
@@ -46,15 +48,20 @@ export class TextureManager {
       color: 0xffffff,
       side: THREE.DoubleSide,
       transparent: true,
-      opacity: 0.76,
+      opacity: 0.84,
       alphaTest: 0.02,
       depthWrite: false,
       vertexColors: true,
-      roughness: 0.08,
+      roughness: 0.045,
       metalness: 0,
       clearcoat: 1,
-      clearcoatRoughness: 0.04,
-      reflectivity: 0.72,
+      clearcoatRoughness: 0.025,
+      reflectivity: 0.82,
+      ior: 1.333,
+      thickness: 2.4,
+      attenuationColor: new THREE.Color(0x1f7fa6),
+      attenuationDistance: 18,
+      envMapIntensity: 0.72,
     });
   }
 
