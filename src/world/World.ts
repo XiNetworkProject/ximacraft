@@ -13,6 +13,15 @@ export class World {
   readonly terrain: TerrainGenerator;
   environmentVisualState: EnvironmentVisualState | null = null;
   private readonly chunkCreatedHandlers: Array<(chunk: Chunk) => void> = [];
+  // Cache mono-entrée de getChunk : les accès (meshing, AO, physique, raycast)
+  // sont très cohérents spatialement. Évite l'allocation d'une clé string et le
+  // Map.get à chaque getBlock. Invalidé par un compteur de génération bumpé à
+  // chaque ajout/suppression de chunk (donc jamais de chunk périmé renvoyé).
+  private chunkGen = 0;
+  private cacheCx = Number.NaN;
+  private cacheCz = Number.NaN;
+  private cacheGen = -1;
+  private cacheChunk: Chunk | undefined = undefined;
 
   constructor(
     readonly seed: string,
@@ -26,7 +35,15 @@ export class World {
   }
 
   getChunk(cx: number, cz: number): Chunk | undefined {
-    return this.chunks.get(chunkKey(cx, cz));
+    if (cx === this.cacheCx && cz === this.cacheCz && this.cacheGen === this.chunkGen) {
+      return this.cacheChunk;
+    }
+    const chunk = this.chunks.get(chunkKey(cx, cz));
+    this.cacheCx = cx;
+    this.cacheCz = cz;
+    this.cacheGen = this.chunkGen;
+    this.cacheChunk = chunk;
+    return chunk;
   }
 
   ensureChunk(cx: number, cz: number): Chunk {
@@ -36,10 +53,18 @@ export class World {
       chunk = new Chunk(cx, cz);
       this.terrain.generateChunk(chunk);
       this.chunks.set(key, chunk);
+      this.chunkGen += 1;
       this.applySavedChangesToChunk(chunk);
       for (const handler of this.chunkCreatedHandlers) handler(chunk);
     }
     return chunk;
+  }
+
+  /** Décharge un chunk (et invalide le cache getChunk). */
+  deleteChunk(key: string): boolean {
+    const removed = this.chunks.delete(key);
+    if (removed) this.chunkGen += 1;
+    return removed;
   }
 
   getBlock(x: number, y: number, z: number): BlockId {
@@ -54,7 +79,7 @@ export class World {
     return chunk.getLocal(worldToLocal(x), iy, worldToLocal(z));
   }
 
-  setBlock(x: number, y: number, z: number, blockId: BlockId, trackChange = true): void {
+  setBlock(x: number, y: number, z: number, blockId: BlockId, trackChange = true, affectsSurface = true): void {
     const ix = Math.floor(x);
     const iy = Math.floor(y);
     const iz = Math.floor(z);
@@ -65,7 +90,7 @@ export class World {
     const cx = worldToChunk(ix);
     const cz = worldToChunk(iz);
     const chunk = this.ensureChunk(cx, cz);
-    chunk.setLocal(worldToLocal(ix), iy, worldToLocal(iz), blockId);
+    chunk.setLocal(worldToLocal(ix), iy, worldToLocal(iz), blockId, affectsSurface);
     if (trackChange) {
       this.blockChanges.set(blockKey(ix, iy, iz), blockId);
     }

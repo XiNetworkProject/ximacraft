@@ -38,6 +38,10 @@ export class WorldMemorySystem {
   private lastPlayer: { x: number; z: number } | null = null;
   private lastBiome = "";
   private lastWeather = "";
+  // Cellule spatiale d'exploration : les scans coûteux (biome/POI/villages) ne
+  // se déclenchent qu'en changeant de cellule (8 blocs), pas à chaque frame.
+  private lastCellX = Number.NaN;
+  private lastCellZ = Number.NaN;
 
   update(delta: number, world: World, surface: SurfaceWeatherState, player: { x: number; z: number }, sample: WeatherSample): void {
     this.age += delta;
@@ -116,20 +120,31 @@ export class WorldMemorySystem {
   }
 
   private updateExploration(world: World, player: { x: number; z: number }, sample: WeatherSample): void {
+    // Léger, chaque frame : distance parcourue + météo courante (Set/hypot).
     if (this.lastPlayer) {
       const step = Math.hypot(player.x - this.lastPlayer.x, player.z - this.lastPlayer.z);
       if (step < 80) this.distanceTravelled += step;
     }
     this.lastPlayer = { x: player.x, z: player.z };
+    this.lastWeather = sample.weatherType;
+    this.seenWeather.add(sample.weatherType);
+
+    // Scans coûteux (hauteur/biome/village/POI) : seulement en changeant de
+    // cellule spatiale de 8 blocs. Le joueur découvre toujours tout en se
+    // déplaçant ; le journal conserve exactement les mêmes données.
+    const cellX = Math.floor(player.x / 8);
+    const cellZ = Math.floor(player.z / 8);
+    if (cellX === this.lastCellX && cellZ === this.lastCellZ) return;
+    this.lastCellX = cellX;
+    this.lastCellZ = cellZ;
+
     const x = Math.floor(player.x);
     const z = Math.floor(player.z);
     const height = world.getSurfaceHeight(x, z);
     const biome = world.getBiomeAt(x, z).id;
     this.lastBiome = biome;
-    this.lastWeather = sample.weatherType;
     this.maxAltitude = Math.max(this.maxAltitude, height);
     this.seenBiomes.add(biome);
-    this.seenWeather.add(sample.weatherType);
 
     const settlement = world.terrain.regions.settlementAt(x, z, height, biome, (wx, wz) => world.getSurfaceHeight(wx, wz));
     if (settlement) this.seenStructures.add(settlement.kind === "village" ? "village" : "hameau");

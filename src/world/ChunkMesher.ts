@@ -51,6 +51,14 @@ export type ChunkMeshResult = {
 
 export class ChunkMesher {
   private readonly lighting: LightingEngine;
+  // Cache de biome par colonne pour le chunk en cours (16×16). getBiomeAt fait
+  // de l'échantillonnage de bruit coûteux ; les faces d'une même colonne le
+  // partagent. Réinitialisé à chaque build.
+  private readonly biomeCache: Array<ReturnType<World["getBiomeAt"]> | undefined> = new Array(CHUNK_SIZE * CHUNK_SIZE);
+  private cacheOriginX = 0;
+  private cacheOriginZ = 0;
+  /** Temps du dernier calcul de champ de lumière (ms), lu par le profiler. */
+  lastLightingMs = 0;
 
   constructor(
     private readonly world: World,
@@ -61,12 +69,19 @@ export class ChunkMesher {
   }
 
   build(chunk: Chunk): ChunkMeshResult {
-    this.lighting.clearCache();
+    // Prépare le champ de lumière O(1) du chunk (agrège les sources du halo 3×3
+    // et les projette une seule fois). Aucun coût si aucune source alentour.
+    const lt = performance.now();
+    this.lighting.beginChunk(this.world, chunk);
+    this.lastLightingMs = performance.now() - lt;
     const opaque = this.createBuffers();
     const transparent = this.createBuffers();
     const water = this.createBuffers();
     const originX = chunk.cx * CHUNK_SIZE;
     const originZ = chunk.cz * CHUNK_SIZE;
+    this.cacheOriginX = originX;
+    this.cacheOriginZ = originZ;
+    this.biomeCache.fill(undefined);
 
     for (let y = 0; y < 128; y += 1) {
       for (let z = 0; z < CHUNK_SIZE; z += 1) {
@@ -532,7 +547,10 @@ export class ChunkMesher {
 
   private applyLocalLight(color: THREE.Color, blockId: BlockId, x: number, y: number, z: number): THREE.Color {
     const emission = this.lighting.getEmission(blockId);
-    const sample = this.lighting.sampleLocalLight(this.world, x + 0.5, y + 0.5, z + 0.5, emission > 0 ? 5 : 7);
+    // Bloc émissif : calcul exact rayon 5 (rare). Sinon lecture O(1) du champ.
+    const sample = emission > 0
+      ? this.lighting.sampleEmissiveSelf(x, y, z)
+      : this.lighting.sampleFieldAt(x, y, z);
     const sampledIntensity = blockId === BlockId.WATER ? sample.intensity * 0.18 : sample.intensity;
     const localStrength = Math.min(0.42, sampledIntensity * 0.3);
     const selfStrength = Math.min(0.34, (emission / 15) * 0.28);
@@ -574,8 +592,19 @@ export class ChunkMesher {
     return new THREE.Color(0xffffff).lerp(tint, strength);
   }
 
-  private grassTint(x: number, z: number): THREE.Color {
+  /** getBiomeAt avec cache par colonne (voir biomeCache). */
+  private biomeAt(x: number, z: number): ReturnType<World["getBiomeAt"]> {
+    const col = (x - this.cacheOriginX) + (z - this.cacheOriginZ) * CHUNK_SIZE;
+    if (col < 0 || col >= this.biomeCache.length) return this.world.getBiomeAt(x, z);
+    const cached = this.biomeCache[col];
+    if (cached) return cached;
     const biome = this.world.getBiomeAt(x, z);
+    this.biomeCache[col] = biome;
+    return biome;
+  }
+
+  private grassTint(x: number, z: number): THREE.Color {
+    const biome = this.biomeAt(x, z);
     let color: THREE.Color;
     switch (biome.id) {
       case "forest":
@@ -634,7 +663,7 @@ export class ChunkMesher {
   }
 
   private foliageTint(x: number, z: number, birch: boolean): THREE.Color {
-    const biome = this.world.getBiomeAt(x, z);
+    const biome = this.biomeAt(x, z);
     let color: THREE.Color;
     if (birch) {
       color = new THREE.Color(biome.id === "snow" || biome.id === "snow_forest" || biome.id === "tundra" ? 0xaecb76 : 0x94c95f);

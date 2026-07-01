@@ -948,12 +948,23 @@ console.log("\n[render] voxel lighting and water runtime state are deterministic
   world.setBlock(4, 72, 0, BlockId.SEA_LANTERN, false);
 
   const lighting = new LightingEngine(registry);
-  const nearGlow = lighting.sampleLocalLight(world, 1, 72, 0, 8);
-  const farGlow = lighting.sampleLocalLight(world, 12, 72, 0, 8);
-  const cachedGlow = lighting.sampleLocalLight(world, 1, 72, 0, 8);
+  // Nouveau moteur : on prépare le champ du chunk puis on lit en O(1). Les
+  // lectures partagent un objet réutilisé, donc on capture les valeurs.
+  const chunk = world.getChunk(0, 0)!;
+  lighting.beginChunk(world, chunk);
+  const snap = (s: { intensity: number; r: number; g: number; b: number; sources: number }) => ({
+    intensity: s.intensity,
+    r: s.r,
+    g: s.g,
+    b: s.b,
+    sources: s.sources,
+  });
+  const nearGlow = snap(lighting.sampleFieldAt(1, 72, 0));
+  const farGlow = snap(lighting.sampleFieldAt(12, 72, 0));
+  const cachedGlow = snap(lighting.sampleFieldAt(1, 72, 0));
   check("local voxel light is produced near emissive blocks", nearGlow.intensity > 0.35 && nearGlow.sources >= 1, `intensity=${nearGlow.intensity.toFixed(2)} sources=${nearGlow.sources}`);
   check("local voxel light attenuates with distance", nearGlow.intensity > farGlow.intensity, `near=${nearGlow.intensity.toFixed(2)} far=${farGlow.intensity.toFixed(2)}`);
-  check("light cache returns deterministic samples", JSON.stringify(nearGlow) === JSON.stringify(cachedGlow));
+  check("light field returns deterministic samples", JSON.stringify(nearGlow) === JSON.stringify(cachedGlow));
 
   const water = new WaterWaves();
   water.update(1, 12, 0, 0.82);

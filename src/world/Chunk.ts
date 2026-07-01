@@ -10,6 +10,19 @@ export class Chunk {
   dirty = true;
   generated = false;
   triangleCount = 0;
+  /**
+   * Cache des sources lumineuses du chunk (packed: x,y,z,emission,r,g,b × n),
+   * utilisé par LightingEngine. `null` = jamais calculé ; recalculé quand
+   * `lightDirty` est vrai (un bloc a changé).
+   */
+  lightSources: Float32Array | null = null;
+  lightDirty = true;
+  /**
+   * Vrai quand la surface (bloc plein le plus haut, hors couches de neige) a pu
+   * changer depuis le dernier scan du système de neige. Les couches de neige
+   * ne l'invalident pas (elles ne modifient pas la surface).
+   */
+  snowSurfaceDirty = true;
 
   constructor(
     readonly cx: number,
@@ -23,12 +36,14 @@ export class Chunk {
     return this.blocks[this.index(x, y, z)] as BlockId;
   }
 
-  setLocal(x: number, y: number, z: number, blockId: BlockId): void {
+  setLocal(x: number, y: number, z: number, blockId: BlockId, affectsSurface = true): void {
     if (y < 0 || y >= WORLD_HEIGHT) {
       return;
     }
     this.blocks[this.index(x, y, z)] = blockId;
     this.dirty = true;
+    this.lightDirty = true;
+    if (affectsSurface) this.snowSurfaceDirty = true;
   }
 
   dispose(): void {

@@ -62,6 +62,7 @@ import { SpatialAudioMixer } from "../assets/SpatialAudioMixer";
 import { WeatherMapUI } from "../ui/weather/WeatherMapUI";
 import { buildWorldMapData, WorldMapJournalUI } from "../ui/WorldMapJournalUI";
 import { DebugOverlay } from "../ui/DebugOverlay";
+import { Profiler } from "../ui/Profiler";
 import { HotbarUI } from "../ui/HotbarUI";
 import { HUD } from "../ui/HUD";
 import { InventoryUI } from "../ui/InventoryUI";
@@ -168,6 +169,7 @@ export class Game {
   private readonly hotbar: HotbarUI;
   private readonly inventory: InventoryUI;
   private readonly debug: DebugOverlay;
+  private readonly profiler: Profiler;
   private readonly command: CommandSystem;
   private readonly weatherMapUI: WeatherMapUI;
   private readonly worldMapJournalUI: WorldMapJournalUI;
@@ -240,6 +242,7 @@ export class Game {
       this.hotbar.render();
     });
     this.debug = new DebugOverlay(this.overlay);
+    this.profiler = new Profiler(this.overlay);
     this.command = new CommandSystem(this.overlay);
     this.weatherMapUI = new WeatherMapUI(
       this.overlay,
@@ -452,8 +455,11 @@ export class Game {
     if (!this.chunks || !this.world) return;
     const previousGenerations = this.chunks.maxChunkGenerationsPerFrame;
     const previousRebuilds = this.chunks.maxChunkRebuildsPerFrame;
+    const previousBudget = this.chunks.frameBudgetMs;
     this.chunks.maxChunkGenerationsPerFrame = Math.max(previousGenerations, 4);
     this.chunks.maxChunkRebuildsPerFrame = Math.max(previousRebuilds, 4);
+    // Écran de chargement : on peut travailler à fond (pas de contrainte 60 FPS).
+    this.chunks.frameBudgetMs = 1000;
     const passes = 10;
     for (let i = 0; i < passes; i += 1) {
       this.chunks.update(this.player.position);
@@ -462,6 +468,7 @@ export class Game {
     }
     this.chunks.maxChunkGenerationsPerFrame = previousGenerations;
     this.chunks.maxChunkRebuildsPerFrame = previousRebuilds;
+    this.chunks.frameBudgetMs = previousBudget;
   }
 
   private enterWorldFromMenu(message: string): void {
@@ -531,15 +538,36 @@ export class Game {
     const now = performance.now();
     const elapsed = Math.min(0.5, (now - this.lastTime) / 1000);
     const delta = Math.min(0.05, elapsed);
+    this.profiler.recordFrame((now - this.lastTime));
     this.lastTime = now;
 
     if (this.started && this.world && this.chunks && this.entities) {
       this.frame(delta, elapsed);
     }
 
+    const rt = this.profiler.begin();
     this.renderer.render();
+    this.profiler.add("render", rt);
     this.input.endFrame();
+    this.presentProfiler();
   };
+
+  private presentProfiler(): void {
+    if (!this.profiler.enabled) return;
+    const counts = this.chunks?.getDebugCounts() ?? { loaded: 0, meshed: 0, dirty: 0, pending: 0 };
+    const info = this.renderer.renderer.info;
+    this.profiler.present({
+      loaded: counts.loaded,
+      meshed: counts.meshed,
+      dirty: counts.dirty,
+      pending: counts.pending,
+      drawCalls: info.render.calls,
+      triangles: info.render.triangles,
+      geometries: info.memory.geometries,
+      textures: info.memory.textures,
+      programs: info.programs?.length ?? 0,
+    });
+  }
 
   private frame(delta: number, weatherDelta: number): void {
     const world = this.world!;
@@ -557,13 +585,21 @@ export class Game {
     this.player.update(delta, this.input, this.cameraController, world, controlsEnabled);
     this.updateMovementAudio(delta, world, controlsEnabled, wasGrounded);
 
-    chunks.update(this.player.position);
+    const facing = this.cameraController.getForward();
+    chunks.update(this.player.position, facing.x, facing.z);
+    this.profiler.addMs("gen", chunks.profGenMs);
+    this.profiler.addMs("mesh", chunks.profMeshMs);
+    this.profiler.addMs("light", chunks.profLightMs);
+    const tEntities = this.profiler.begin();
     this.entities!.update(delta, this.player);
+    this.profiler.add("entities", tEntities);
     // Moteur météo régional : on suit le joueur puis on avance la simulation.
+    const tWeather = this.profiler.begin();
     this.weatherEngine.setObserver(this.player.position.x, this.player.position.z);
     this.updateWeatherEnvironment(world);
     this.weatherDirector.update(weatherDelta);
     this.weatherEngine.update(weatherDelta);
+    this.profiler.add("weather", tWeather);
     // Enregistre l'historique radar (capture cadencée par le temps simulé).
     this.radarHistory.update(this.weatherEngine, this.player.position.x, this.player.position.z);
     this.weatherDebugProbeTimer -= weatherDelta;
@@ -575,7 +611,9 @@ export class Game {
       document.documentElement.dataset.livingWorld = JSON.stringify(this.livingWorld.debug());
     }
     const weatherScene = this.weatherDirector.scenarios.currentScene;
+    const tSnow = this.profiler.begin();
     this.worldSnow?.update(weatherDelta, weatherScene);
+    this.profiler.add("snow", tSnow);
     this.localWeatherField.update(delta, this.weatherEngine, this.player.position.x, this.player.position.z);
     this.sky.clouds.setWeatherField(
       this.localWeatherField.texture,
@@ -593,10 +631,13 @@ export class Game {
     this.sky.weatherSample = this.weatherEngine.sampleObserver();
     this.sky.weatherScene = weatherScene;
     this.weather.syncRegional(this.sky.weatherSample);
+    const tSky = this.profiler.begin();
     const dayFactor = this.sky.updateWithWorld(delta, this.time, this.weather, this.player, world);
+    this.profiler.add("sky", tSky);
     // Nuages convectifs procéduraux (sim particulaire + rendu d'ellipsoïdes).
     const sunAng = (this.time.ticks / WORLD_DAY_TICKS) * Math.PI * 2;
     this.sunDirScratch.set(Math.cos(sunAng), Math.max(0.15, Math.sin(sunAng)), -0.4).normalize();
+    const tClouds = this.profiler.begin();
     this.regionalClouds.update(weatherDelta, this.player.position.x, this.player.position.z);
     this.skyCloudPopulation.update(
       delta,
@@ -623,6 +664,7 @@ export class Game {
       this.cloudSystem.update(this.cloudVisualDelta, this.player.position.x, this.player.position.z);
       this.cloudVisualDelta = 0;
     }
+    this.profiler.add("clouds", tClouds);
 
     // --- Couche météo riche (v0.4) ---
     const sample = this.sky.weatherSample!;
@@ -642,9 +684,13 @@ export class Game {
     });
     this.waterWaves.update(delta, sample.windX, sample.windZ, sample.precipitation);
     this.vegetationWind.update(delta, sample.windX, sample.windZ);
+    const tFauna = this.profiler.begin();
     this.ambientLife.update(delta, sample, camera, world, dayFactor, this.player.position, this.player.velocity);
     this.livingWorld.update(delta, world, this.player.position, sample, this.time.ticks, season, this.qualityPreset);
+    this.profiler.add("fauna", tFauna);
+    const tWorldMem = this.profiler.begin();
     this.worldMemory.update(delta, world, this.surfaceState, this.player.position, sample);
+    this.profiler.add("worldMem", tWorldMem);
     // Perspective aérienne : teinte le lointain vers la couleur de l'atmosphère
     // (= couleur du brouillard/horizon du ciel), chaude vers le soleil.
     const aerialFog = this.renderer.scene.fog as THREE.Fog | null;
@@ -679,10 +725,12 @@ export class Game {
     });
     world.environmentVisualState = environment.visual;
     this.refreshEnvironmentVisualsIfNeeded(environment, world);
+    const tFog = this.profiler.begin();
     this.fogBankRenderer.update(delta, this.environmentDirector, camera, this.menuSettings.fogQuality, {
       environment,
       getHeight: (x, z) => world.getSurfaceHeight(x, z),
     });
+    this.profiler.add("fog", tFog);
     document.documentElement.dataset.environmentState = JSON.stringify({
       season: environment.season.season,
       temp: Number(environment.temperature.toFixed(1)),
@@ -800,6 +848,7 @@ export class Game {
     }
     if (this.input.wasPressed("F3")) {
       this.debug.toggle();
+      this.profiler.toggle();
     }
     if (this.input.wasPressed("F4")) {
       this.setGameMode(this.player.gameMode === "creative" ? "survival" : "creative");
@@ -1413,18 +1462,22 @@ export class Game {
   private configureChunkBudgets(): void {
     if (!this.chunks) return;
     const distance = this.chunks.renderDistance;
+    // Le budget temps borne le pic par frame ; les compteurs restent un plafond.
     if (this.qualityPreset === "low") {
       this.chunks.maxChunkGenerationsPerFrame = 1;
       this.chunks.maxChunkRebuildsPerFrame = 1;
+      this.chunks.frameBudgetMs = 4;
       return;
     }
     if (this.qualityPreset === "high") {
       this.chunks.maxChunkGenerationsPerFrame = distance >= 12 ? 2 : 3;
       this.chunks.maxChunkRebuildsPerFrame = distance >= 12 ? 2 : 3;
+      this.chunks.frameBudgetMs = 8;
       return;
     }
     this.chunks.maxChunkGenerationsPerFrame = distance >= 10 ? 1 : 2;
     this.chunks.maxChunkRebuildsPerFrame = distance >= 10 ? 1 : 2;
+    this.chunks.frameBudgetMs = 6;
   }
 
   private openWeatherMap(): void {
