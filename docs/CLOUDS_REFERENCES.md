@@ -89,9 +89,13 @@ des sources sous licence, ce qui a seulement été **étudié**, et ce qui relè
 
 | Source | Licence | Statut | Fichiers concernés |
 |---|---|---|---|
-| SebLague/Clouds | MIT (c) 2019 Sebastian Lague | **Adapté** (clean-room) | `StratiformCloudRenderer.ts`, `StratiformNoiseTextures.ts` |
-| frmlinn/clouds-sim | MIT (c) 2026 frmlinn | **Adapté** (clean-room) | `StratiformNoiseTextures.ts`, `StratiformCloudRenderer.ts` |
+| SebLague/Clouds | MIT (c) 2019 Sebastian Lague | **Adapté** (clean-room) | `StratiformCloudRenderer.ts`, `StratiformNoiseTextures.ts`, `CumulusFieldRenderer.ts` |
+| frmlinn/clouds-sim | MIT (c) 2026 frmlinn | **Adapté** (clean-room) | `StratiformNoiseTextures.ts`, `StratiformCloudRenderer.ts`, `CumulusFieldRenderer.ts` |
 | mhr1235/cl0ud | Non confirmée | **Inspiration esthétique seule — aucun code** | — |
+
+## Phase 2B-1 — champ de cumulus de beau temps
+
+`src/clouds/FairWeatherCumulusField.ts` (logique monde, pure) + `src/render/weather/CumulusFieldRenderer.ts` (rendu volumétrique LOD) réutilisent le **même bruit 3D partagé** (`StratiformNoiseTextures`) et les mêmes techniques adaptées (raymarch ray-box, Beer-Lambert, Henyey-Greenstein, jitter blue-noise stable, early-exit, érosion forme+détail). Le champ est **streamé en espace de masse d'air** (`airMass = world - wind·time`) sur une grille globale déterministe (hash par cellule), avec 3 zones de LOD et fondu atmosphérique. Aucun sprite/billboard/blob 2D ; `SkyCloudPopulationRenderer` reste coupé. Audit : `CloudVolumeRenderer` (unique FrameCompositor, lié à `ConvectiveCloudSystem`, budget 8 bakes) n'a pas été détourné — inadapté à un champ streamé de dizaines de cumulus.
 
 Licences amont conservées : `LICENSES/seb-lague-clouds-MIT.txt`,
 `LICENSES/clouds-sim-MIT.txt`. Voir aussi `THIRD_PARTY_NOTICES.md` et

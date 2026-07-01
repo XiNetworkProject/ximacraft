@@ -38,6 +38,8 @@ import { FogDensitySampler } from "../src/render/weather/fog/FogDensitySampler";
 import type { FogBankRenderSample } from "../src/environment/FogBankSystem";
 import { FogLodSystem } from "../src/render/weather/fog/FogLodSystem";
 import { resolveStratiformLayerSpecs, StratiformCloudRenderer } from "../src/render/weather/StratiformCloudRenderer";
+import { FairWeatherCumulusField, deriveCumulusFieldWeather } from "../src/clouds/FairWeatherCumulusField";
+import { CumulusFieldRenderer } from "../src/render/weather/CumulusFieldRenderer";
 import { EntityAssetManager } from "../src/living/EntityAssetManager";
 import { EntityAnimationController } from "../src/living/EntityAnimationController";
 import { SpatialAudioMixer } from "../src/assets/SpatialAudioMixer";
@@ -183,9 +185,11 @@ console.log("\n[visual lab] deterministic reset and scenarios");
 
   const cumulus = runVisualLab("fair_cumulus");
   const cumulusDecks = resolveStratiformLayerSpecs(cumulus.director.currentScene, cumulus.engine.getActiveEvents(), { x: 0, z: 0 });
-  check("visual fair_cumulus creates 3-6 masses", cumulus.convectiveClouds.masses.length >= 3 && cumulus.convectiveClouds.masses.length <= 6, `masses=${cumulus.convectiveClouds.masses.length}`);
-  check("visual fair_cumulus masses are non-precipitating", cumulus.convectiveClouds.masses.every((mass) => mass.precipitationRate <= 0.001 && mass.stormVisual.precip === "none"));
+  // Phase 2B-1 : fair_cumulus n'utilise plus 5 masses fixes ; il active le champ.
+  check("visual fair_cumulus spawns no fixed convective masses", cumulus.convectiveClouds.masses.length === 0, `masses=${cumulus.convectiveClouds.masses.length}`);
+  check("visual fair_cumulus activates the cumulus field", deriveCumulusFieldWeather(cumulus.director.currentScene, cumulus.engine.sampleObserver(), 0).active);
   check("visual fair_cumulus creates no storm event", visualLabStormCellCount(cumulus.engine) === 0);
+  check("visual fair_cumulus produces no local precipitation", cumulus.engine.sampleObserver().precipitation < 0.01, `precip=${cumulus.engine.sampleObserver().precipitation.toFixed(3)}`);
   check("visual fair_cumulus has no stratiform deck", cumulusDecks.length === 0, `decks=${cumulusDecks.map((deck) => deck.kind).join(",")}`);
 
   const snow = runVisualLab("snow_squall");
@@ -282,6 +286,85 @@ console.log("\n[stratiform] world-anchored decks: no residue, stable anchors, he
   });
   check("stratiform renderer clears the deck when the scene goes clear", renderer.debugState().visibleCount === 0, `count=${renderer.debugState().visibleCount}`);
   renderer.dispose();
+}
+
+// ============================================================================
+console.log("\n[cumulus] world-space fair-weather field: activation, determinism, streaming");
+{
+  const cumulusHarness = runVisualLab("fair_cumulus");
+  const fairWeather = deriveCumulusFieldWeather(cumulusHarness.director.currentScene, cumulusHarness.engine.sampleObserver(), 40);
+  check("fair_cumulus weather activates the field with real coverage", fairWeather.active && fairWeather.coverage > 0.1, `active=${fairWeather.active} cov=${fairWeather.coverage.toFixed(2)}`);
+
+  const clearWeather = deriveCumulusFieldWeather(runVisualLab("clear").director.currentScene, cumulusHarness.engine.sampleObserver(), 40);
+  const overcastH = runVisualLab("overcast");
+  const overcastWeather = deriveCumulusFieldWeather(overcastH.director.currentScene, overcastH.engine.sampleObserver(), 40);
+  const rainH = runVisualLab("rain_front");
+  const rainWeather = deriveCumulusFieldWeather(rainH.director.currentScene, rainH.engine.sampleObserver(), 40);
+  check("clear disables the cumulus field", !clearWeather.active);
+  check("overcast disables the cumulus field (stratiform only)", !overcastWeather.active);
+  check("rain_front disables the cumulus field (nimbostratus only)", !rainWeather.active);
+
+  // Champ actif : de nombreuses formations, réparties, sans doublon d'id.
+  const field = new FairWeatherCumulusField();
+  field.setSeed("cumulus-seed");
+  field.update(0, 0, fairWeather, "high");
+  const formations = field.formations;
+  check("active field produces many formations", formations.length > 12, `n=${formations.length}`);
+  const ids = new Set(formations.map((f) => f.id));
+  check("formations have unique cell ids (no border duplicates)", ids.size === formations.length, `ids=${ids.size} n=${formations.length}`);
+  const distinctCells = new Set(formations.map((f) => `${f.cellX},${f.cellZ}`));
+  check("formations spread across many cells (not one grid point)", distinctCells.size === formations.length && distinctCells.size > 12, `cells=${distinctCells.size}`);
+  const spreadX = Math.max(...formations.map((f) => f.worldX)) - Math.min(...formations.map((f) => f.worldX));
+  check("formations span kilometers, not a tight ring", spreadX > 4000, `spreadX=${Math.round(spreadX)}`);
+  check("formations vary in size and altitude", new Set(formations.map((f) => Math.round(f.radius))).size > 4 && new Set(formations.map((f) => Math.round(f.baseHeight))).size > 4);
+
+  // Déterminisme : même seed + même position + même temps → formations identiques.
+  const fieldA = new FairWeatherCumulusField(); fieldA.setSeed("determinism"); fieldA.update(1234, -5678, fairWeather, "balanced");
+  const fieldB = new FairWeatherCumulusField(); fieldB.setSeed("determinism"); fieldB.update(1234, -5678, fairWeather, "balanced");
+  const sig = (f: FairWeatherCumulusField) => f.formations.map((c) => `${c.id}:${c.worldX.toFixed(1)}:${c.worldZ.toFixed(1)}`).join("|");
+  check("same seed+position+time yields identical formations", sig(fieldA) === sig(fieldB) && fieldA.formations.length > 0);
+
+  // Advection vent : à t différent, une même cellule dérive (pas de téléport).
+  const t0 = new FairWeatherCumulusField(); t0.setSeed("drift"); t0.update(0, 0, { ...fairWeather, windX: 6, windZ: 0, time: 0 }, "balanced");
+  const t1 = new FairWeatherCumulusField(); t1.setSeed("drift"); t1.update(0, 0, { ...fairWeather, windX: 6, windZ: 0, time: 100 }, "balanced");
+  check("field drifts with wind between two times", t0.formations.length > 0 && t1.formations.length > 0);
+
+  // Retour au même endroit/instant → cohérence (re-génération identique).
+  const revisit = new FairWeatherCumulusField(); revisit.setSeed("revisit");
+  revisit.update(2000, 2000, fairWeather, "balanced");
+  const before = revisit.formations.map((f) => f.id).sort((a, b) => a - b).join(",");
+  revisit.update(-9000, 12000, fairWeather, "balanced");
+  revisit.update(2000, 2000, fairWeather, "balanced");
+  const after = revisit.formations.map((f) => f.id).sort((a, b) => a - b).join(",");
+  check("returning to a zone regenerates the same formations", before === after && before.length > 0);
+
+  // Déplacement très loin : pas de crash, budget borné.
+  const far = new FairWeatherCumulusField(); far.setSeed("far");
+  let farThrew = false;
+  try {
+    far.update(9_500_000, -7_200_000, fairWeather, "high");
+  } catch (error) { farThrew = true; console.log(String(error)); }
+  check("traveling very far does not crash", !farThrew);
+  check("formation count stays within budget", far.formations.length <= 64, `n=${far.formations.length}`);
+
+  // Renderer headless : bake bruit + update + LOD sans planter, puis clear.
+  const scene = new THREE.Scene();
+  const cumulusRenderer = new CumulusFieldRenderer(scene);
+  const camera = new THREE.PerspectiveCamera(70, 1, 0.1, 12000);
+  camera.position.set(0, 90, 0);
+  const sun = new THREE.Vector3(0.3, 0.9, -0.2).normalize();
+  let renderThrew = false;
+  try {
+    for (let i = 0; i < 4; i += 1) {
+      field.update(0, 0, { ...fairWeather, time: i * 0.5 }, "balanced");
+      cumulusRenderer.update({ formations: field.formations, camera, sunDirection: sun, dayFactor: 1, time: i * 0.5, windX: fairWeather.windX, windZ: fairWeather.windZ, quality: "balanced", delta: 0.5 });
+    }
+  } catch (error) { renderThrew = true; console.log(String(error)); }
+  check("cumulus renderer updates headless without throwing", !renderThrew);
+  check("cumulus renderer shows volumetric slots under fair weather", cumulusRenderer.debug().active && cumulusRenderer.debug().visible > 0, `dbg=${JSON.stringify(cumulusRenderer.debug())}`);
+  cumulusRenderer.update({ formations: [], camera, sunDirection: sun, dayFactor: 1, time: 5, windX: 0, windZ: 0, quality: "balanced", delta: 1 });
+  check("cumulus renderer clears slots when the field is empty", cumulusRenderer.debug().visible === 0, `vis=${cumulusRenderer.debug().visible}`);
+  cumulusRenderer.dispose();
 }
 
 // ============================================================================

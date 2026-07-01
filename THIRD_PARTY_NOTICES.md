@@ -13,9 +13,11 @@ New committed assets must be original, CC0, CC-BY-compatible, or otherwise expli
 
 ## Adapted Techniques — Volumetric Clouds (no source code copied)
 
-The stratiform cloud renderer (`src/render/weather/StratiformCloudRenderer.ts`)
-and its pre-baked 3D noise (`src/render/weather/StratiformNoiseTextures.ts`) are
-clean-room TypeScript + GLSL (WebGL2 / Three.js) re-implementations. No upstream
+The stratiform cloud renderer (`src/render/weather/StratiformCloudRenderer.ts`),
+the fair-weather cumulus field (`src/clouds/FairWeatherCumulusField.ts` +
+`src/render/weather/CumulusFieldRenderer.ts`) and their shared pre-baked 3D noise
+(`src/render/weather/StratiformNoiseTextures.ts`) are clean-room TypeScript + GLSL
+(WebGL2 / Three.js) re-implementations. No upstream
 source file, shader, texture, or asset was copied. Techniques (raymarching,
 ray-box intersection, shape+detail density, Worley/Perlin-Worley erosion,
 Beer-Lambert transmittance, Henyey-Greenstein phase, jitter, early-exit, 3D

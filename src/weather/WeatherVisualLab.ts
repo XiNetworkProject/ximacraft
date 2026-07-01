@@ -45,6 +45,7 @@ export interface WeatherVisualLabTargets {
   surfaceState?: SurfaceWeatherState;
   radarHistory?: { reset(): void };
   lightning?: { reset(): void };
+  cumulusField?: { reset(): void };
   rainCurtains?: { setEnabled(enabled: boolean): void; clear(): void };
   setTime?: (name: string) => void;
   setLegacyWeather?: (type: string, duration?: number, intensity?: number) => void;
@@ -64,7 +65,6 @@ interface PaintOptions {
   radiusCells?: number;
 }
 
-const BASE_RENDERERS = ["SkySystem", "CloudVolumeRenderer", "PrecipitationRenderer local"];
 const RAIN_CURTAINS_WARNING = "RainCurtainRenderer distant desactive: artefact colonnes/grille connu.";
 
 export function resetWeatherVisualLabState(targets: WeatherVisualLabTargets): void {
@@ -74,6 +74,7 @@ export function resetWeatherVisualLabState(targets: WeatherVisualLabTargets): vo
   targets.engine.setWind(2.5, 0.8);
   targets.resetCloudVisuals?.();
   targets.convectiveClouds.clear();
+  targets.cumulusField?.reset();
   targets.groundSystem?.clearOverride();
   targets.surfaceState?.clear();
   targets.radarHistory?.reset();
@@ -121,36 +122,27 @@ export function startWeatherVisualLabScenario(
     case "fair_cumulus": {
       targets.setTime?.("day");
       targets.scenarios.hold(SynopticRegime.HUMID_HIGH_PRESSURE, 900);
+      // Phase 2B-1 : le champ de cumulus world-space REMPLACE les 5 masses fixes.
+      // On force l'état de ciel cumulus de beau temps → le FairWeatherCumulusField
+      // s'active (streaming air-mass), sans pluie/orage/deck stratiforme.
+      targets.scenarios.forceSky(SkyState.FAIR_WEATHER_CUMULUS, 900, "none");
+      targets.scenarios.forcePrecipitation(PrecipitationKind.NONE, 0, 900, "none", false);
       paintWeatherLabCells(targets.engine, {
-        cloudCover: 0.16,
-        humidity: 0.52,
-        instability: 0.22,
+        cloudCover: 0.3,
+        humidity: 0.54,
+        instability: 0.14,
         temperature: 18,
         pressure: 1016,
         windX: 4,
         windZ: 1.2,
-        radiusCells: 8,
+        radiusCells: 9,
       });
-      const count = 5;
-      for (let i = 0; i < count; i += 1) {
-        const angle = -0.9 + i * 0.42;
-        const distance = 1300 + i * 430;
-        const mass = targets.convectiveClouds.spawnAt(
-          origin.x + Math.cos(angle) * distance,
-          origin.z - 900 - Math.sin(angle) * distance,
-          { humidity: 0.56, instability: 0.22 },
-        );
-        mass.primeForTest("cumulus");
-        mass.puffBudget = 70;
-        mass.precipitationRate = 0;
-        mass.stormVisual.precip = "none";
-      }
       return {
         scenario,
-        label: "Cumulus de beau temps",
+        label: "Champ de cumulus de beau temps",
         forcedTime: "day",
-        expected: "3 a 6 petits cumulus raymarches, separes, non precipitants.",
-        renderers: BASE_RENDERERS.slice(0, 2),
+        expected: "Champ de cumulus world-space (proche->horizon) qui derive avec le vent, sans pluie, sans orage, sans deck stratiforme.",
+        renderers: ["FairWeatherCumulusField", "CumulusFieldRenderer", "SkySystem"],
         warnings: [RAIN_CURTAINS_WARNING],
       };
     }

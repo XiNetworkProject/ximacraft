@@ -108,8 +108,8 @@ const VISUAL_SCENARIOS: Record<string, { command: string[]; look: string; render
   },
   fair_cumulus: {
     command: ["weather", "scenario", "fair_cumulus"],
-    look: "cumulus de beau temps séparés, sous ciel bleu ; ils dérivent avec le vent.",
-    renderer: "CloudVolumeRenderer (volumes raymarchés, ancrés monde).",
+    look: "champ de cumulus de beau temps du proche à l'horizon, sous ciel bleu ; ils dérivent avec le vent.",
+    renderer: "FairWeatherCumulusField + CumulusFieldRenderer (champ world-space streame, volumes LOD).",
   },
   overcast: {
     command: ["weather", "set", "cloudy", "radius=6000"],

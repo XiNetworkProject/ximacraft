@@ -1,5 +1,6 @@
 import type { WeatherVisualLabResult } from "./WeatherVisualLab";
 import type { StratiformCloudDebugState } from "../render/weather/StratiformCloudRenderer";
+import type { CumulusFieldRenderDebug } from "../render/weather/CumulusFieldRenderer";
 
 export type WeatherVisualMode = "new" | "legacy";
 
@@ -12,11 +13,35 @@ export interface StratiformCloudTarget extends ToggleableRenderer {
   debugState(): StratiformCloudDebugState;
 }
 
+export interface CumulusFieldTarget extends ToggleableRenderer {
+  debug(): CumulusFieldRenderDebug;
+}
+
 export interface WeatherVisualTargets {
   stratiformDome: ToggleableRenderer;
   stratiformClouds?: StratiformCloudTarget;
+  cumulusField?: CumulusFieldTarget;
   cloudSprites: ToggleableRenderer;
   distantPrecipitation?: ToggleableRenderer;
+}
+
+export interface CumulusFieldMetrics {
+  enabled: boolean;
+  active: boolean;
+  coverage: number;
+  windX: number;
+  windZ: number;
+  scannedCells: number;
+  activeTiles: number;
+  formations: number;
+  visible: number;
+  near: number;
+  mid: number;
+  horizon: number;
+  seed: number;
+  tileX: number;
+  tileZ: number;
+  streamRadius: number;
 }
 
 export interface WeatherLayerAuthority {
@@ -59,6 +84,7 @@ export interface WeatherVisualLabMetrics {
   precipitationRenderer?: { rain: boolean; flakes: boolean; drawCount: number; opacity: number };
   rainCurtains?: { enabled: boolean; visible: boolean; drawCount: number };
   stratiformClouds?: StratiformCloudDebugState;
+  cumulusField?: CumulusFieldMetrics;
 }
 
 export class WeatherVisualDirector {
@@ -121,6 +147,13 @@ export class WeatherVisualDirector {
         note: "Phase 2A: couches world-space base/sommet, sans dome fBm",
       },
       {
+        phenomenon: "Cumulus de beau temps (champ world-space)",
+        authority: "FairWeatherCumulusField + CumulusFieldRenderer",
+        worldAnchored: true,
+        active: () => this.targets.cumulusField?.debug().active ?? false,
+        note: "Phase 2B: champ streame air-mass, LOD proche/inter/horizon",
+      },
+      {
         phenomenon: "Sprites anciens de cumulus",
         authority: "SkyCloudPopulationRenderer",
         worldAnchored: true,
@@ -162,6 +195,7 @@ export class WeatherVisualDirector {
     const legacy = this.mode === "legacy";
     this.targets.stratiformDome.setEnabled(legacy);
     this.targets.stratiformClouds?.setEnabled(!legacy);
+    this.targets.cumulusField?.setEnabled(!legacy);
     this.targets.cloudSprites.setEnabled(legacy);
     this.targets.distantPrecipitation?.setEnabled(false);
   }
@@ -212,6 +246,16 @@ export class WeatherVisualDirector {
     rows.push(this.row("Precip joueur", metrics ? `${metrics.sample.precipitation.toFixed(2)} / ${metrics.sample.weatherType}` : "-"));
     rows.push(this.row("Nuages", metrics ? `${Math.round(metrics.sample.cloudCover * 100)}%` : "-"));
     rows.push(this.row("Stratiforme", this.formatStratiform(metrics?.stratiformClouds)));
+    const cumulus = metrics?.cumulusField;
+    rows.push(this.row("Cumulus field", cumulus ? (cumulus.enabled ? (cumulus.active ? "ON" : "on (idle)") : "OFF") : "-"));
+    if (cumulus && cumulus.enabled) {
+      rows.push(this.row("Cumulus couv/vent", `${Math.round(cumulus.coverage * 100)}% / ${this.directionLabel(cumulus.windX, cumulus.windZ)} ${Math.hypot(cumulus.windX, cumulus.windZ).toFixed(1)}b/s`));
+      rows.push(this.row("Cumulus formations", `${cumulus.formations} (vis ${cumulus.visible})`));
+      rows.push(this.row("Cumulus LOD proche/inter/horizon", `${cumulus.near}/${cumulus.mid}/${cumulus.horizon}`));
+      rows.push(this.row("Cumulus tuiles actives", `${cumulus.activeTiles}/${cumulus.scannedCells}`));
+      rows.push(this.row("Cumulus tuile / seed", `(${cumulus.tileX},${cumulus.tileZ}) seed=${cumulus.seed}`));
+      rows.push(this.row("Cumulus distance stream", `${Math.round(cumulus.streamRadius)}m`));
+    }
     rows.push(this.row("Fog / neige", metrics ? `${(metrics.fogDensity ?? 0).toFixed(2)} / ${(metrics.snowDepth ?? 0).toFixed(2)}` : "-"));
     rows.push(this.row("Renderer precip", metrics?.precipitationRenderer
       ? `rain=${metrics.precipitationRenderer.rain ? "on" : "off"} flakes=${metrics.precipitationRenderer.flakes ? "on" : "off"} draw=${metrics.precipitationRenderer.drawCount}`

@@ -46,6 +46,8 @@ import { GroundCoverRenderer } from "../render/weather/GroundCoverRenderer";
 import { PrecipitationRenderer } from "../render/weather/PrecipitationRenderer";
 import { RainCurtainRenderer } from "../render/weather/RainCurtainRenderer";
 import { StratiformCloudRenderer } from "../render/weather/StratiformCloudRenderer";
+import { FairWeatherCumulusField, deriveCumulusFieldWeather } from "../clouds/FairWeatherCumulusField";
+import { CumulusFieldRenderer } from "../render/weather/CumulusFieldRenderer";
 import { LightningSystem } from "../weather/LightningSystem";
 import { LightningRenderer } from "../render/weather/LightningRenderer";
 import { ConvectiveCloudSystem } from "../clouds/ConvectiveCloudSystem";
@@ -157,6 +159,8 @@ export class Game {
   private readonly precipitation: PrecipitationRenderer;
   private readonly rainCurtains: RainCurtainRenderer;
   private readonly stratiformClouds: StratiformCloudRenderer;
+  private readonly cumulusField = new FairWeatherCumulusField();
+  private readonly cumulusFieldRenderer: CumulusFieldRenderer;
   private readonly windVisuals: WindVisualSystem;
   private readonly lightning = new LightningSystem();
   private readonly lightningRenderer: LightningRenderer;
@@ -234,6 +238,7 @@ export class Game {
     this.rainCurtains = new RainCurtainRenderer(this.renderer.scene);
     this.rainCurtains.setEnabled(false);
     this.stratiformClouds = new StratiformCloudRenderer(this.renderer.scene);
+    this.cumulusFieldRenderer = new CumulusFieldRenderer(this.renderer.scene);
     // Volumétrique désactivé (rendu "soucoupe" blob) : les orages passent par
     // CloudMassRenderer (billboards tour + enclume), cohérent avec le style voxel.
     this.windVisuals = new WindVisualSystem(this.renderer.scene);
@@ -251,6 +256,7 @@ export class Game {
     this.weatherVisual = new WeatherVisualDirector({
       stratiformDome: this.sky.clouds,
       stratiformClouds: this.stratiformClouds,
+      cumulusField: this.cumulusFieldRenderer,
       cloudSprites: this.skyCloudPopulation,
       distantPrecipitation: this.rainCurtains,
     }, this.overlay);
@@ -506,6 +512,8 @@ export class Game {
     this.radarHistory.reset();
     this.convectiveClouds.clear();
     this.stratiformClouds.clear();
+    this.cumulusFieldRenderer.clear();
+    this.cumulusField.setSeed(seed);
     this.stormCloudMasses.clear();
     this.loading("climate", 0.2);
     this.currentSeed = seed;
@@ -708,6 +716,25 @@ export class Game {
     this.profiler.add("stratiform_clouds", tStratiform);
     // Coût réel (mesuré une fois) du bake du bruit 3D stratiforme (0 si fallback 2D).
     this.profiler.addMs("stratiform_noise", this.stratiformClouds.noiseBakeMs);
+    // Champ de cumulus de beau temps world-space (streaming + rendu volumétrique LOD).
+    const tCumulusField = this.profiler.begin();
+    const cumulusWeather = deriveCumulusFieldWeather(weatherScene, sample, this.weatherEngine.state.time);
+    this.cumulusField.update(this.player.position.x, this.player.position.z, cumulusWeather, this.qualityPreset);
+    this.profiler.add("cumulus_field", tCumulusField);
+    this.profiler.addMs("cumulus_streaming", this.cumulusField.debug().streamMs);
+    const tCumulusRender = this.profiler.begin();
+    this.cumulusFieldRenderer.update({
+      formations: this.cumulusField.formations,
+      camera: this.renderer.camera,
+      sunDirection: this.sky.sunDirection,
+      dayFactor,
+      time: this.weatherEngine.state.time,
+      windX: sample.windX,
+      windZ: sample.windZ,
+      quality: this.qualityPreset,
+      delta,
+    });
+    this.profiler.add("cumulus_render", tCumulusRender);
     // Ombres de nuages au sol : couverture régionale + masses convectives.
     this.cloudShadows.update(delta, {
       sunDirection: this.sky.sunDirection,
@@ -835,6 +862,7 @@ export class Game {
       fogDensity: environment.fog.density,
       snowDepth: this.surfaceState.get(this.player.position.x, this.player.position.z)?.snowDepth ?? 0,
       stratiformClouds: this.stratiformClouds.debugState(),
+      cumulusField: this.cumulusFieldMetrics(),
       precipitationRenderer: this.precipitation.debugState,
       rainCurtains: this.rainCurtains.debugState,
     });
@@ -1398,6 +1426,29 @@ export class Game {
     });
   }
 
+  private cumulusFieldMetrics() {
+    const field = this.cumulusField.debug();
+    const render = this.cumulusFieldRenderer.debug();
+    return {
+      enabled: render.enabled,
+      active: render.active,
+      coverage: field.coverage,
+      windX: field.windX,
+      windZ: field.windZ,
+      scannedCells: field.scannedCells,
+      activeTiles: field.activeTiles,
+      formations: field.formations,
+      visible: render.visible,
+      near: render.near,
+      mid: render.mid,
+      horizon: render.horizon,
+      seed: field.seed,
+      tileX: field.tileX,
+      tileZ: field.tileZ,
+      streamRadius: field.streamRadius,
+    };
+  }
+
   private startWeatherVisualLabScenario(scenario: WeatherVisualScenarioName) {
     return startWeatherVisualLab(scenario, {
       engine: this.weatherEngine,
@@ -1407,8 +1458,11 @@ export class Game {
         this.convectiveClouds.clear();
         this.regionalClouds.reset();
         this.stratiformClouds.clear();
+        this.cumulusField.reset();
+        this.cumulusFieldRenderer.clear();
         this.stormCloudMasses.clear();
       },
+      cumulusField: { reset: () => { this.cumulusField.reset(); this.cumulusFieldRenderer.clear(); } },
       groundSystem: this.groundSystem,
       surfaceState: this.surfaceState,
       radarHistory: this.radarHistory,
@@ -1457,6 +1511,8 @@ export class Game {
         this.convectiveClouds.clear();
         this.regionalClouds.reset();
         this.stratiformClouds.clear();
+        this.cumulusField.reset();
+        this.cumulusFieldRenderer.clear();
         this.stormCloudMasses.clear();
       },
       livingWorld: this.livingWorld,
