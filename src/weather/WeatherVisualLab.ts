@@ -19,6 +19,9 @@ export type WeatherVisualScenarioName =
   | "cumulus_humid"
   | "overcast"
   | "rain_front"
+  | "rain_front_far"
+  | "rain_front_approaching"
+  | "rain_front_local"
   | "valley_fog"
   | "snow_squall"
   | "thunderstorm";
@@ -34,6 +37,9 @@ export const WEATHER_VISUAL_SCENARIOS: readonly WeatherVisualScenarioName[] = [
   "cumulus_humid",
   "overcast",
   "rain_front",
+  "rain_front_far",
+  "rain_front_approaching",
+  "rain_front_local",
   "valley_fog",
   "snow_squall",
   "thunderstorm",
@@ -209,36 +215,17 @@ export function startWeatherVisualLabScenario(
         warnings: [RAIN_CURTAINS_WARNING],
       };
 
-    case "rain_front": {
-      targets.setTime?.("noon");
-      targets.scenarios.hold(SynopticRegime.OCCLUDED_FRONT, 900);
-      targets.scenarios.forceSky(SkyState.MID_OVERCAST, 900, "none");
-      targets.scenarios.forcePrecipitation(PrecipitationKind.NONE, 0, 900, "none", false);
-      paintWeatherLabCells(targets.engine, {
-        cloudCover: 0.58,
-        humidity: 0.58,
-        instability: 0.08,
-        temperature: 12,
-        pressure: 1007,
-        windX: 0,
-        windZ: 6,
-        radiusCells: 9,
-      });
-      const band = targets.engine.spawnRainBand(3600, origin.x, origin.z - 7200);
-      band.intensity = 0.68;
-      band.maxAge = 760;
-      band.speed = 8;
-      band.cloudBaseY = 130;
-      band.setDirection({ x: 0, z: 1 });
-      return {
-        scenario,
-        label: "Front pluvieux stratiforme",
-        forcedTime: "noon",
-        expected: "Une seule bande de pluie mobile avec nimbostratus large, sans cellule orageuse ni eclair.",
-        renderers: ["WeatherEngine rain_band", "StratiformCloudRenderer", "PrecipitationRenderer local quand le front arrive"],
-        warnings: [RAIN_CURTAINS_WARNING],
-      };
-    }
+    case "rain_front":
+      return activateRainFrontScenario(scenario, targets, origin, "Front pluvieux stratiforme", 4300, 10, "mid");
+
+    case "rain_front_far":
+      return activateRainFrontScenario(scenario, targets, origin, "Front pluvieux lointain", 7600, 8, "far");
+
+    case "rain_front_approaching":
+      return activateRainFrontScenario(scenario, targets, origin, "Front pluvieux en approche", 4300, 10, "mid");
+
+    case "rain_front_local":
+      return activateRainFrontScenario(scenario, targets, origin, "Front pluvieux sur le joueur", 900, 8, "local");
 
     case "valley_fog":
       targets.setTime?.("sunrise");
@@ -325,6 +312,53 @@ export function startWeatherVisualLabScenario(
       };
     }
   }
+}
+
+function activateRainFrontScenario(
+  scenario: WeatherVisualScenarioName,
+  targets: WeatherVisualLabTargets,
+  origin: { x: number; z: number },
+  label: string,
+  distanceAhead: number,
+  speed: number,
+  mode: "far" | "mid" | "local",
+): WeatherVisualLabResult {
+  targets.setTime?.("noon");
+  targets.scenarios.hold(SynopticRegime.OCCLUDED_FRONT, 900);
+  targets.scenarios.forceSky(SkyState.MID_OVERCAST, 900, "none");
+  if (mode !== "local") {
+    targets.scenarios.forcePrecipitation(PrecipitationKind.NONE, 0, 900, "none", false);
+  }
+  paintWeatherLabCells(targets.engine, {
+    cloudCover: mode === "local" ? 0.9 : 0.58,
+    humidity: mode === "local" ? 0.86 : 0.58,
+    instability: 0.08,
+    temperature: 12,
+    pressure: 1007,
+    windX: 0,
+    windZ: 6,
+    radiusCells: 9,
+    precipitation: mode === "local" ? 0.22 : 0,
+  });
+  const band = targets.engine.spawnRainBand(3600, origin.x, origin.z - distanceAhead);
+  band.intensity = mode === "local" ? 0.78 : 0.68;
+  band.maxAge = 760;
+  band.speed = speed;
+  band.cloudBaseY = 130;
+  band.producesLightning = false;
+  band.setDirection({ x: 0, z: 1 });
+  return {
+    scenario,
+    label,
+    forcedTime: "noon",
+    expected: mode === "local"
+      ? "La rain_band couvre le joueur: pluie locale active, champ distant attenue, aucun orage."
+      : mode === "mid"
+        ? "Rain shafts distants visibles sous nimbostratus, front en approche, pluie locale encore coupee."
+        : "Voile gris-bleu tres lointain sous nimbostratus, aucune pluie locale.",
+    renderers: ["WeatherEngine rain_band", "StratiformCloudRenderer", "DistantPrecipitationRenderer", "PrecipitationRenderer local quand le front atteint le joueur"],
+    warnings: [RAIN_CURTAINS_WARNING],
+  };
 }
 
 function activateCumulusRegime(

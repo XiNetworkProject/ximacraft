@@ -118,8 +118,23 @@ const VISUAL_SCENARIOS: Record<string, { command: string[]; look: string; render
   },
   rain_front: {
     command: ["weather", "scenario", "cold_front"],
-    look: "front pluvieux mobile : large nimbostratus a distance, sans orage.",
-    renderer: "WeatherEngine rain_band + StratiformCloudRenderer + pluie locale quand le front arrive.",
+    look: "front pluvieux mobile en approche : nimbostratus + patches de pluie distants, sans orage.",
+    renderer: "WeatherEngine rain_band + StratiformCloudRenderer + DistantPrecipitationRenderer + pluie locale quand le front arrive.",
+  },
+  rain_front_far: {
+    command: ["weather", "scenario", "cold_front"],
+    look: "front tres lointain : voile humide gris-bleu, aucune pluie locale.",
+    renderer: "DistantPrecipitationRenderer far + StratiformCloudRenderer.",
+  },
+  rain_front_approaching: {
+    command: ["weather", "scenario", "cold_front"],
+    look: "front a moyenne distance : rain shafts larges, irreguliers et mobiles.",
+    renderer: "DistantPrecipitationRenderer mid + StratiformCloudRenderer.",
+  },
+  rain_front_local: {
+    command: ["weather", "scenario", "cold_front"],
+    look: "rain band sur le joueur : pluie locale active, champ distant attenue.",
+    renderer: "DistantPrecipitationRenderer local fade + PrecipitationRenderer local.",
   },
   valley_fog: {
     command: ["weather", "scenario", "morning_fog"],
@@ -173,7 +188,7 @@ export const COMMANDS: CommandDefinition[] = [
   { usage: "/weather cinematic blizzard_night", prefix: "/weather cinematic blizzard_night", description: "Spawn a dark wind-driven night blizzard." },
   { usage: "/weather cinematic hail_core", prefix: "/weather cinematic hail_core", description: "Spawn a hail core." },
   { usage: "/weather cinematic sunset_rainbow", prefix: "/weather cinematic sunset_rainbow", description: "Spawn sunset rain and rainbow conditions." },
-  { usage: "/weather visual clear|fair_cumulus|overcast|rain_front|valley_fog|snow_squall|thunderstorm", prefix: "/weather visual", description: "Weather Visual Lab: place a real world-anchored phenomenon and name its renderer." },
+  { usage: "/weather visual clear|fair_cumulus|overcast|rain_front|rain_front_far|rain_front_approaching|rain_front_local|valley_fog|snow_squall|thunderstorm", prefix: "/weather visual", description: "Weather Visual Lab: place a real world-anchored phenomenon and name its renderer." },
   { usage: "/weather visual mode new|legacy", prefix: "/weather visual mode", description: "A/B toggle: new (fBm dome + 2D sprites OFF) vs legacy (old renderers ON)." },
   { usage: "/weather visual layers", prefix: "/weather visual layers", description: "Show the single-authority table: which renderer draws each phenomenon." },
   { usage: "/weather debug field|fronts|cells|cloudlayers", prefix: "/weather debug field", description: "Weather value under player, active fronts/cells (dir/speed), volumetric cells (base/top), cloud layers." },

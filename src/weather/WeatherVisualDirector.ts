@@ -1,6 +1,7 @@
 import type { WeatherVisualLabResult } from "./WeatherVisualLab";
 import type { StratiformCloudDebugState } from "../render/weather/StratiformCloudRenderer";
 import type { CumulusFieldRenderDebug } from "../render/weather/CumulusFieldRenderer";
+import type { DistantPrecipitationRenderDebug } from "../render/weather/DistantPrecipitationRenderer";
 
 export type WeatherVisualMode = "new" | "legacy";
 
@@ -92,6 +93,7 @@ export interface WeatherVisualLabMetrics {
   rainCurtains?: { enabled: boolean; visible: boolean; drawCount: number };
   stratiformClouds?: StratiformCloudDebugState;
   cumulusField?: CumulusFieldMetrics;
+  distantPrecipitation?: DistantPrecipitationRenderDebug;
 }
 
 export class WeatherVisualDirector {
@@ -122,10 +124,10 @@ export class WeatherVisualDirector {
       },
       {
         phenomenon: "Precipitations distantes",
-        authority: "RainCurtainRenderer",
+        authority: "DistantPrecipitationRenderer",
         worldAnchored: true,
         active: () => this.targets.distantPrecipitation?.isEnabled() ?? false,
-        note: "DESACTIVE en Phase 1: renderer grille/colonnes a remplacer",
+        note: "Phase 2C-1: patches world-space lies aux rain_band; RainCurtainRenderer legacy reste OFF",
       },
       {
         phenomenon: "Precipitations proches",
@@ -204,7 +206,7 @@ export class WeatherVisualDirector {
     this.targets.stratiformClouds?.setEnabled(!legacy);
     this.targets.cumulusField?.setEnabled(!legacy);
     this.targets.cloudSprites.setEnabled(legacy);
-    this.targets.distantPrecipitation?.setEnabled(false);
+    this.targets.distantPrecipitation?.setEnabled(!legacy);
   }
 
   layersReport(): string[] {
@@ -239,7 +241,7 @@ export class WeatherVisualDirector {
     if (this.mode === "legacy") warnings.push("ATTENTION: renderers legacy actifs.");
     if (result?.incomplete) warnings.push(result.incomplete);
     if (metrics?.rainCurtains?.enabled || metrics?.rainCurtains?.visible) {
-      warnings.push("ATTENTION: RainCurtainRenderer actif alors qu'il doit rester coupe en Phase 2A.");
+      warnings.push("ATTENTION: RainCurtainRenderer legacy actif alors qu'il doit rester OFF.");
     }
 
     rows.push(`<div class="weather-visual-lab-title">Weather Visual Lab</div>`);
@@ -253,6 +255,16 @@ export class WeatherVisualDirector {
     rows.push(this.row("Precip joueur", metrics ? `${metrics.sample.precipitation.toFixed(2)} / ${metrics.sample.weatherType}` : "-"));
     rows.push(this.row("Nuages", metrics ? `${Math.round(metrics.sample.cloudCover * 100)}%` : "-"));
     rows.push(this.row("Stratiforme", this.formatStratiform(metrics?.stratiformClouds)));
+    rows.push(this.row("Distant precipitation", this.formatDistantPrecipitation(metrics?.distantPrecipitation)));
+    if (metrics?.distantPrecipitation) {
+      rows.push(this.row("Precipitation mode", metrics.distantPrecipitation.mode));
+      rows.push(this.row("Rain patches visible", String(metrics.distantPrecipitation.patchesVisible)));
+      rows.push(this.row("Nearest rain patch", metrics.distantPrecipitation.nearestPatchDistance == null ? "-" : `${Math.round(metrics.distantPrecipitation.nearestPatchDistance)}m`));
+      rows.push(this.row("Rain-band intensity", metrics.distantPrecipitation.rainBandIntensity.toFixed(2)));
+      rows.push(this.row("Wind tilt", metrics.distantPrecipitation.windTilt.toFixed(2)));
+      rows.push(this.row("Local rain blend", metrics.distantPrecipitation.localRainBlend.toFixed(2)));
+      rows.push(this.row("Distant draw", String(metrics.distantPrecipitation.drawCount)));
+    }
     const cumulus = metrics?.cumulusField;
     rows.push(this.row("Cumulus field", cumulus ? (cumulus.enabled ? (cumulus.active ? "ON" : "on (idle)") : "OFF") : "-"));
     if (cumulus && cumulus.enabled) {
@@ -282,6 +294,7 @@ export class WeatherVisualDirector {
     rows.push(this.row("Rideaux distants", metrics?.rainCurtains
       ? `${metrics.rainCurtains.enabled ? "enabled" : "disabled"} draw=${metrics.rainCurtains.drawCount}`
       : "disabled"));
+    rows.push(this.row("Legacy RainCurtainRenderer", metrics?.rainCurtains?.enabled || metrics?.rainCurtains?.visible ? "ON" : "OFF"));
 
     const nearest = this.nearestEvent(metrics);
     if (nearest) rows.push(this.row("Plus proche", nearest));
@@ -303,6 +316,14 @@ export class WeatherVisualDirector {
     if (!nearest) return "renderer on, aucun deck";
     const dir = this.directionLabel(nearest.directionX, nearest.directionZ);
     return `${nearest.kind} base=${Math.round(nearest.baseHeight)} top=${Math.round(nearest.topHeight)} cov=${Math.round(nearest.coverage * 100)}% dist=${Math.round(nearest.distance)}m ${dir} ${nearest.speed.toFixed(1)}b/s`;
+  }
+
+  private formatDistantPrecipitation(state: DistantPrecipitationRenderDebug | undefined): string {
+    if (!state) return "-";
+    if (!state.enabled) return "OFF";
+    if (!state.active) return "ON, idle";
+    const distance = state.nearestPatchDistance == null ? "-" : `${Math.round(state.nearestPatchDistance)}m`;
+    return `ON ${state.mode} patches=${state.patchesVisible} nearest=${distance}`;
   }
 
   private directionLabel(x: number, z: number): string {

@@ -38,6 +38,8 @@ import { FogDensitySampler } from "../src/render/weather/fog/FogDensitySampler";
 import type { FogBankRenderSample } from "../src/environment/FogBankSystem";
 import { FogLodSystem } from "../src/render/weather/fog/FogLodSystem";
 import { resolveStratiformLayerSpecs, StratiformCloudRenderer } from "../src/render/weather/StratiformCloudRenderer";
+import { DistantPrecipitationField } from "../src/weather/precipitation/DistantPrecipitationField";
+import { DistantPrecipitationRenderer } from "../src/render/weather/DistantPrecipitationRenderer";
 import { FairWeatherCumulusField, deriveCumulusFieldWeather } from "../src/clouds/FairWeatherCumulusField";
 import { CumulusFieldRenderer } from "../src/render/weather/CumulusFieldRenderer";
 import { RegionalCloudController } from "../src/clouds/RegionalCloudController";
@@ -155,6 +157,24 @@ function runVisualLab(
   return { ...h, result };
 }
 
+function sampleDistantPrecipitation(
+  h: Pick<Harness, "engine">,
+  quality: "low" | "balanced" | "high" = "balanced",
+) {
+  const field = new DistantPrecipitationField();
+  const sample = h.engine.sampleObserver();
+  const state = field.update({
+    events: h.engine.getActiveEvents(),
+    observerX: h.engine.getObserver().x,
+    observerZ: h.engine.getObserver().z,
+    sample,
+    time: h.engine.state.time,
+    quality,
+    localRainBlend: DistantPrecipitationField.localRainBlend(sample),
+  });
+  return { field, state, debug: field.debug() };
+}
+
 // ============================================================================
 console.log("\n[visual lab] deterministic reset and scenarios");
 {
@@ -212,6 +232,68 @@ console.log("\n[visual lab] deterministic reset and scenarios");
   check("visual A->clear removes all residue", switchHarness.engine.activeEventCount === 0 && switchHarness.convectiveClouds.masses.length === 0);
   runVisualLab("rain_front", switchHarness);
   check("visual clear->rain_front has no storm residue", visualLabStormCellCount(switchHarness.engine) === 0 && switchHarness.engine.getActiveEvents().every((event) => event.type === "rain_band"));
+}
+
+// ============================================================================
+console.log("\n[distant precipitation] rain bands create world-space distant rain only");
+{
+  for (const scenario of ["clear", "fair_cumulus", "overcast"] as const) {
+    const h = runVisualLab(scenario);
+    const distant = sampleDistantPrecipitation(h);
+    check(`distant precipitation inactive for ${scenario}`, !distant.state.active && distant.state.patches.length === 0, `mode=${distant.state.mode} patches=${distant.state.patches.length}`);
+  }
+
+  const far = runVisualLab("rain_front_far");
+  const farDistant = sampleDistantPrecipitation(far);
+  check("rain_front_far has exactly one rain band", far.engine.getActiveEvents().length === 1 && far.engine.getActiveEvents()[0].type === "rain_band");
+  check("rain_front_far has no storm cell", visualLabStormCellCount(far.engine) === 0);
+  check("rain_front_far has no lightning", far.engine.getActiveEvents().every((event) => !event.producesLightning));
+  check("rain_front_far legacy curtain stays off", far.rainCurtains.enabled === false);
+  check("rain_front_far distant precipitation active", farDistant.state.active && farDistant.state.mode === "far", `mode=${farDistant.state.mode} patches=${farDistant.state.patches.length}`);
+  check("rain_front_far local rain off", far.engine.sampleObserver().precipitation < 0.03 && farDistant.state.localRainBlend < 0.05, `precip=${far.engine.sampleObserver().precipitation.toFixed(3)} blend=${farDistant.state.localRainBlend.toFixed(2)}`);
+
+  const approaching = runVisualLab("rain_front_approaching");
+  const approachingDistant = sampleDistantPrecipitation(approaching);
+  check("rain_front_approaching has exactly one rain band", approaching.engine.getActiveEvents().length === 1 && approaching.engine.getActiveEvents()[0].type === "rain_band");
+  check("rain_front_approaching stays non-storm", visualLabStormCellCount(approaching.engine) === 0 && approaching.engine.getActiveEvents().every((event) => !event.producesLightning));
+  check("rain_front_approaching distant field is mid", approachingDistant.state.active && approachingDistant.state.mode === "mid", `mode=${approachingDistant.state.mode}`);
+  check("rain_front_approaching patches are closer than far", (approachingDistant.state.nearestPatchDistance ?? Infinity) < (farDistant.state.nearestPatchDistance ?? 0), `far=${farDistant.state.nearestPatchDistance} mid=${approachingDistant.state.nearestPatchDistance}`);
+
+  const local = runVisualLab("rain_front_local");
+  step(local, 20);
+  const localDistant = sampleDistantPrecipitation(local);
+  check("rain_front_local has exactly one rain band", local.engine.getActiveEvents().length === 1 && local.engine.getActiveEvents()[0].type === "rain_band");
+  check("rain_front_local has no lightning or storm cell", visualLabStormCellCount(local.engine) === 0 && local.engine.getActiveEvents().every((event) => !event.producesLightning));
+  check("rain_front_local local rain active", local.engine.sampleObserver().precipitation > 0.05 && localDistant.state.localRainBlend > 0.12, `precip=${local.engine.sampleObserver().precipitation.toFixed(3)} blend=${localDistant.state.localRainBlend.toFixed(2)}`);
+  check("rain_front_local distant mode fades to local", localDistant.state.mode === "local", `mode=${localDistant.state.mode}`);
+
+  const a = runVisualLab("rain_front_approaching");
+  const b = runVisualLab("rain_front_approaching");
+  const aState = sampleDistantPrecipitation(a).state;
+  const bState = sampleDistantPrecipitation(b).state;
+  const signature = (state: typeof aState) => state.patches.map((patch) => [
+    Math.round(patch.x), Math.round(patch.z), Math.round(patch.radiusX), Math.round(patch.radiusZ), Number(patch.opacity.toFixed(3)), Number(patch.seed.toFixed(4)),
+  ]);
+  check("distant precipitation patches are deterministic for same setup", JSON.stringify(signature(aState)) === JSON.stringify(signature(bState)));
+
+  a.engine.setObserver(50000, 50000);
+  const farAway = sampleDistantPrecipitation(a, "high");
+  check("distant precipitation budget is bounded after moving far away", farAway.state.patches.length <= 22, `patches=${farAway.state.patches.length}`);
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(70, 1, 0.1, 12000);
+  camera.position.set(0, 90, 0);
+  const renderer = new DistantPrecipitationRenderer(scene);
+  renderer.update({
+    field: approachingDistant.state,
+    fieldDebug: approachingDistant.debug,
+    camera,
+    quality: "balanced",
+    time: approaching.engine.state.time,
+    dayFactor: 1,
+  });
+  check("distant precipitation renderer headless has bounded draw", renderer.debug().drawCount > 0 && renderer.debug().drawCount <= 2200, `draw=${renderer.debug().drawCount}`);
+  renderer.dispose();
 }
 
 // ============================================================================
