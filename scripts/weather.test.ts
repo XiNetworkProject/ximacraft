@@ -31,12 +31,14 @@ import { ThermalComfortSystem } from "../src/environment/ThermalComfortSystem";
 import { SurfaceConditionSystem } from "../src/environment/SurfaceConditionSystem";
 import { WorldPhenologySystem } from "../src/environment/WorldPhenologySystem";
 import { FogBankSystem } from "../src/environment/FogBankSystem";
+import { FogField } from "../src/environment/FogField";
 import { dewPointC } from "../src/environment/EnvironmentDirector";
 import { SeasonState } from "../src/living/SeasonSystem";
 import { WeatherRadarHistory } from "../src/weather/map/WeatherRadarHistory";
 import { FogDensitySampler } from "../src/render/weather/fog/FogDensitySampler";
 import type { FogBankRenderSample } from "../src/environment/FogBankSystem";
 import { FogLodSystem } from "../src/render/weather/fog/FogLodSystem";
+import { FogVolumeRenderer } from "../src/render/weather/fog/FogVolumeRenderer";
 import { resolveStratiformLayerSpecs, StratiformCloudRenderer } from "../src/render/weather/StratiformCloudRenderer";
 import { DistantPrecipitationField } from "../src/weather/precipitation/DistantPrecipitationField";
 import { DistantPrecipitationRenderer } from "../src/render/weather/DistantPrecipitationRenderer";
@@ -213,6 +215,22 @@ console.log("\n[visual lab] deterministic reset and scenarios");
   check("visual fair_cumulus creates no storm event", visualLabStormCellCount(cumulus.engine) === 0);
   check("visual fair_cumulus produces no local precipitation", cumulus.engine.sampleObserver().precipitation < 0.01, `precip=${cumulus.engine.sampleObserver().precipitation.toFixed(3)}`);
   check("visual fair_cumulus has no stratiform deck", cumulusDecks.length === 0, `decks=${cumulusDecks.map((deck) => deck.kind).join(",")}`);
+
+  const valleyFog = runVisualLab("valley_fog");
+  check("visual valley_fog has no rain or storm events", valleyFog.engine.activeEventCount === 0 && valleyFog.engine.sampleObserver().precipitation < 0.01 && visualLabStormCellCount(valleyFog.engine) === 0);
+
+  const valleyFogDawn = runVisualLab("valley_fog_dawn");
+  check("visual valley_fog_dawn keeps fog scene dry", valleyFogDawn.engine.activeEventCount === 0 && valleyFogDawn.director.currentScene.skyState === SkyState.DENSE_FOG, `sky=${valleyFogDawn.director.currentScene.skyState}`);
+
+  const rainMist = runVisualLab("rain_mist");
+  check("visual rain_mist creates one real rain band", rainMist.engine.getActiveEvents().length === 1 && rainMist.engine.getActiveEvents()[0].type === "rain_band");
+  check("visual rain_mist has no lightning or storm cell", visualLabStormCellCount(rainMist.engine) === 0 && rainMist.engine.getActiveEvents().every((event) => !event.producesLightning));
+  check("visual rain_mist uses a nimbostratus/rain-band deck", resolveStratiformLayerSpecs(rainMist.director.currentScene, rainMist.engine.getActiveEvents(), { x: 0, z: 0 }).some((deck) => deck.kind === "nimbostratus"), "missing nimbostratus");
+
+  const lowStratus = runVisualLab("low_stratus");
+  const lowStratusDecks = resolveStratiformLayerSpecs(lowStratus.director.currentScene, lowStratus.engine.getActiveEvents(), { x: 0, z: 0 });
+  check("visual low_stratus creates a low stratus deck", lowStratusDecks.some((deck) => deck.kind === "stratus"), `decks=${lowStratusDecks.map((deck) => deck.kind).join(",")}`);
+  check("visual low_stratus has no forced rain", lowStratus.engine.activeEventCount === 0 && lowStratus.engine.sampleObserver().precipitation < 0.01, `events=${lowStratus.engine.activeEventCount} precip=${lowStratus.engine.sampleObserver().precipitation.toFixed(3)}`);
 
   const snow = runVisualLab("snow_squall");
   const snowLocal = snow.engine.sampleObserver();
@@ -819,6 +837,153 @@ console.log("\n[environment] seasons, comfort, dew/frost and fog are coherent");
   }
   check("humid calm water/valley setup creates visible fog or mist", stateA.density > 0.15, `density=${stateA.density.toFixed(2)}`);
   check("fog bank sampling is deterministic for same seed/input", stateA.density.toFixed(3) === stateB.density.toFixed(3) && stateA.kind === stateB.kind, `a=${stateA.density.toFixed(3)} b=${stateB.density.toFixed(3)}`);
+}
+
+// ============================================================================
+console.log("\n[environment] world-space fog field modes, terrain, drift and renderer safety");
+{
+  const field = new FogField();
+  const clearField = field.resolve({
+    humidity: 0.42,
+    dewPoint: 3,
+    temperature: 18,
+    windSpeed: 3,
+    windX: 3,
+    windZ: 0,
+    dayFactor: 1,
+    precipitation: 0,
+    cloudCover: 0.03,
+    waterNearby: 0,
+    valleyFactor: 0,
+    playerY: 72,
+    surfaceY: 64,
+  }, 0, "none");
+  const fairField = field.resolve({
+    humidity: 0.55,
+    dewPoint: 8,
+    temperature: 18,
+    windSpeed: 4,
+    windX: 4,
+    windZ: 1,
+    dayFactor: 0.9,
+    precipitation: 0,
+    cloudCover: 0.32,
+    waterNearby: 0.05,
+    valleyFactor: 0.05,
+    playerY: 72,
+    surfaceY: 64,
+  }, 0, "none");
+  check("clear weather has only weak haze and no dense fog", clearField.mode === "none" && clearField.density < 0.04, `mode=${clearField.mode} density=${clearField.density.toFixed(2)}`);
+  check("fair cumulus humidity does not create parasitic fog", fairField.density < 0.08 && fairField.mode !== "valley" && fairField.mode !== "rain_mist", `mode=${fairField.mode} density=${fairField.density.toFixed(2)}`);
+
+  const lowValley = field.resolve({
+    humidity: 0.98,
+    dewPoint: 4.2,
+    temperature: 4.5,
+    windSpeed: 0.4,
+    windX: 0.35,
+    windZ: 0.15,
+    dayFactor: 0.04,
+    precipitation: 0,
+    cloudCover: 0.34,
+    waterNearby: 0.78,
+    valleyFactor: 0.92,
+    playerY: 62,
+    surfaceY: 56,
+  }, 0.34, "valley");
+  const highValley = field.resolve({
+    humidity: 0.98,
+    dewPoint: 4.2,
+    temperature: 4.5,
+    windSpeed: 0.4,
+    windX: 0.35,
+    windZ: 0.15,
+    dayFactor: 0.04,
+    precipitation: 0,
+    cloudCover: 0.34,
+    waterNearby: 0.78,
+    valleyFactor: 0.92,
+    playerY: 180,
+    surfaceY: 56,
+  }, 0.34, "valley");
+  check("valley fog mode activates in humid low terrain", lowValley.mode === "valley" && lowValley.density > 0.35, `mode=${lowValley.mode} density=${lowValley.density.toFixed(2)}`);
+  check("terrain altitude thins valley fog above the inversion", lowValley.density > highValley.density * 2.5, `low=${lowValley.density.toFixed(2)} high=${highValley.density.toFixed(2)}`);
+
+  const rainMist = field.resolve({
+    humidity: 0.9,
+    dewPoint: 10.4,
+    temperature: 11,
+    windSpeed: 5.6,
+    windX: 0.6,
+    windZ: 5.6,
+    dayFactor: 0.6,
+    precipitation: 0.38,
+    cloudCover: 0.92,
+    waterNearby: 0.18,
+    valleyFactor: 0.08,
+    playerY: 66,
+    surfaceY: 64,
+  }, 0.22, "rain_mist");
+  const lowStratusFog = field.resolve({
+    humidity: 0.98,
+    dewPoint: 6.6,
+    temperature: 7,
+    windSpeed: 0.8,
+    windX: 0.8,
+    windZ: 0.2,
+    dayFactor: 0.12,
+    precipitation: 0,
+    cloudCover: 0.94,
+    waterNearby: 0.4,
+    valleyFactor: 0.35,
+    playerY: 65,
+    surfaceY: 64,
+  }, 0.24, "low_stratus");
+  check("rain mist field selects rain_mist mode under a wet front", rainMist.mode === "rain_mist" && rainMist.rainMist > 0.3, `mode=${rainMist.mode} rainMist=${rainMist.rainMist.toFixed(2)}`);
+  check("low stratus field blends ground fog into a low cloud layer", lowStratusFog.mode === "low_stratus" && lowStratusFog.lowStratusBlend > 0.55, `mode=${lowStratusFog.mode} blend=${lowStratusFog.lowStratusBlend.toFixed(2)}`);
+
+  const driftFog = new FogBankSystem();
+  const driftInput = {
+    seed: "fog-drift-seed",
+    playerX: 0,
+    playerZ: 0,
+    humidity: 0.97,
+    dewPoint: 8,
+    temperature: 8.2,
+    windX: 4,
+    windZ: 0,
+    windSpeed: 4,
+    dayFactor: 0.04,
+    precipitation: 0.22,
+    cloudCover: 0.8,
+    waterNearby: 0.7,
+    valleyFactor: 0.6,
+    playerY: 66,
+    surfaceY: 62,
+  };
+  for (let i = 0; i < 6; i += 1) driftFog.update(3, driftInput);
+  const beforeDrift = driftFog.renderSamples(0, 0, 2200)[0];
+  for (let i = 0; i < 6; i += 1) driftFog.update(3, driftInput);
+  const afterDrift = beforeDrift ? driftFog.renderSamples(0, 0, 2200).find((sample) => sample.id === beforeDrift.id) : undefined;
+  check("fog banks drift downwind in world space", !!beforeDrift && !!afterDrift && afterDrift.x > beforeDrift.x + 12, `before=${beforeDrift?.x.toFixed(1)} after=${afterDrift?.x.toFixed(1)}`);
+  check("far fog render sampling remains bounded", driftFog.renderSamples(50000, 50000, 2200).length <= 18);
+
+  const scene = new THREE.Scene();
+  const renderer = new FogVolumeRenderer(scene);
+  const fakeDirector = {
+    state: null,
+    fogRenderSamples: () => [{ id: "headless", x: 0, z: 0, radius: 260, density: 0.72, kind: "valley" as const, mode: "valley" as const }],
+  };
+  let threw = false;
+  try {
+    renderer.update(0.16, fakeDirector as never, new THREE.Vector3(0, 68, 0), "balanced", { getHeight: () => 58 });
+  } catch {
+    threw = true;
+  }
+  check("fog renderer updates headless without crashing", !threw);
+  check("fog renderer produces pooled volumetric layers", renderer.debug().visibleLayers > 0 && renderer.debug().visibleLayers <= 80, `layers=${renderer.debug().visibleLayers}`);
+  check("fog renderer reports no legacy fog overlap", renderer.debug().legacyRendererActive === false);
+  renderer.dispose();
 }
 
 // ============================================================================

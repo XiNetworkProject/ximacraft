@@ -5,6 +5,7 @@ export class FogLayerPool {
   private readonly group = new THREE.Group();
   private readonly geometry = new THREE.IcosahedronGeometry(1, 3);
   private readonly pool: THREE.Mesh[] = [];
+  private activeCount = 0;
 
   constructor(private readonly scene: THREE.Scene) {
     this.group.name = "FogVolumeRenderer";
@@ -13,6 +14,7 @@ export class FogLayerPool {
 
   setLayers(layers: FogVolumeLayer[], time: number): void {
     this.ensure(layers.length);
+    this.activeCount = layers.length;
     for (let i = 0; i < this.pool.length; i += 1) {
       const mesh = this.pool[i];
       const layer = layers[i];
@@ -40,6 +42,10 @@ export class FogLayerPool {
       (mesh.material as THREE.Material).dispose();
     }
     this.pool.length = 0;
+  }
+
+  get visibleCount(): number {
+    return this.activeCount;
   }
 
   private ensure(count: number): void {

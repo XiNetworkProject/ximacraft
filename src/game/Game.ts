@@ -264,6 +264,7 @@ export class Game {
       cumulusField: this.cumulusFieldRenderer,
       cloudSprites: this.skyCloudPopulation,
       distantPrecipitation: this.distantPrecipitationRenderer,
+      fogRenderer: this.fogBankRenderer,
     }, this.overlay);
 
     this.hud = new HUD(this.overlay);
@@ -666,6 +667,7 @@ export class Game {
     this.sky.weatherSample = this.weatherEngine.sampleObserver();
     this.sky.weatherScene = weatherScene;
     this.sky.setStratiformAtmosphere(this.stratiformClouds.atmosphereState());
+    this.sky.setWorldFogAtmosphere(this.environmentDirector.state?.atmosphericHaze ?? null);
     this.weather.syncRegional(this.sky.weatherSample);
     // Champ de cumulus de beau temps : quand il est l'autorité (ciel cumulus),
     // on coupe les cumulus AMBIANTS convectifs/legacy pour éviter les blobs
@@ -795,6 +797,7 @@ export class Game {
     this.profiler.add("worldMem", tWorldMem);
     // Perspective aérienne : teinte le lointain vers la couleur de l'atmosphère
     // (= couleur du brouillard/horizon du ciel), chaude vers le soleil.
+    const tAtmosphericHaze = this.profiler.begin();
     const aerialFog = this.renderer.scene.fog as THREE.Fog | null;
     if (aerialFog) {
       this.aerialPerspective.update(
@@ -806,6 +809,7 @@ export class Game {
       );
       this.skyCloudPopulation.setHaze(aerialFog.color);
     }
+    this.profiler.add("atmospheric_haze", tAtmosphericHaze);
     // Sol : accumulation/fonte (le jour accélère la fonte).
     this.groundSystem.update(
       delta,
@@ -816,15 +820,18 @@ export class Game {
       weatherScene.precipitation,
       weatherScene.temperatureProfile.surface,
     );
+    const tFogField = this.profiler.begin();
     const environment = this.environmentDirector.update({
       delta,
       world,
       surfaceState: this.surfaceState,
+      weatherScene,
       ticks: this.time.ticks,
       player: this.player.position,
       dayFactor,
       exposedToSky: this.cachedSheltered ? 0.15 : 1,
     });
+    this.profiler.add("fog_field", tFogField);
     world.environmentVisualState = environment.visual;
     this.refreshEnvironmentVisualsIfNeeded(environment, world);
     const tFog = this.profiler.begin();
@@ -833,6 +840,9 @@ export class Game {
       getHeight: (x, z) => world.getSurfaceHeight(x, z),
     });
     this.profiler.add("fog", tFog);
+    const fogRendererDebug = this.fogBankRenderer.debug();
+    this.profiler.addMs("fog_streaming", fogRendererDebug.streamingMs);
+    this.profiler.addMs("fog_render", fogRendererDebug.renderMs);
     document.documentElement.dataset.environmentState = JSON.stringify({
       season: environment.season.season,
       temp: Number(environment.temperature.toFixed(1)),
@@ -844,6 +854,7 @@ export class Game {
       haze: Number(environment.airQuality.haze.toFixed(2)),
       fog: Number(environment.fog.density.toFixed(2)),
       visibility: environment.fog.visibilityMeters,
+      fogMode: environment.fog.mode,
     });
     const tPrecip = this.profiler.begin();
     this.groundRenderer.update(delta, camera);
@@ -898,6 +909,8 @@ export class Game {
         reachesGround: weatherScene.precipitation.reachesGround,
       },
       fogDensity: environment.fog.density,
+      atmosphericHaze: environment.atmosphericHaze,
+      fogRenderer: this.fogBankRenderer.debug(),
       snowDepth: this.surfaceState.get(this.player.position.x, this.player.position.z)?.snowDepth ?? 0,
       stratiformClouds: this.stratiformClouds.debugState(),
       cumulusField: this.cumulusFieldMetrics(),
@@ -1519,6 +1532,7 @@ export class Game {
       radarHistory: this.radarHistory,
       lightning: this.lightning,
       rainCurtains: this.rainCurtains,
+      environmentDirector: this.environmentDirector,
       setTime: (name) => {
         if (!this.time.setNamedTime(name)) this.time.setNamedTime("day");
       },

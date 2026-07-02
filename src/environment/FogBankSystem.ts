@@ -1,5 +1,6 @@
 import { clamp, hashString, makeRng } from "../utils/MathUtils";
 import { EnvironmentFogState, FogBankKind } from "./EnvironmentState";
+import { FogField, FogFieldState } from "./FogField";
 
 interface FogBank {
   id: string;
@@ -19,6 +20,7 @@ export interface FogBankRenderSample {
   radius: number;
   density: number;
   kind: FogBankKind;
+  mode?: FogFieldState["mode"];
 }
 
 export interface FogBankUpdateInput {
@@ -33,13 +35,18 @@ export interface FogBankUpdateInput {
   windSpeed: number;
   dayFactor: number;
   precipitation: number;
+  cloudCover?: number;
   waterNearby: number;
   valleyFactor: number;
+  playerY?: number;
+  surfaceY?: number;
 }
 
 export class FogBankSystem {
   private readonly banks = new Map<string, FogBank>();
+  private readonly field = new FogField();
   private spawnTimer = 0;
+  private lastField: FogFieldState | null = null;
 
   update(delta: number, input: FogBankUpdateInput): EnvironmentFogState {
     this.spawnTimer -= delta;
@@ -60,7 +67,7 @@ export class FogBankSystem {
         this.banks.delete(key);
       }
     }
-    return this.sample(input.playerX, input.playerZ, input.humidity, input.precipitation);
+    return this.sample(input);
   }
 
   debug(): string {
@@ -85,6 +92,7 @@ export class FogBankSystem {
         radius: bank.radius,
         density: bank.density,
         kind: bank.kind,
+        mode: this.lastField?.mode,
       }));
   }
 
@@ -96,8 +104,16 @@ export class FogBankSystem {
   private spawnBanks(input: FogBankUpdateInput): void {
     const saturation = clamp(input.humidity * 1.2 - Math.max(0, input.temperature - input.dewPoint) * 0.12, 0, 1);
     const nightBoost = 1 - input.dayFactor;
-    const opportunity = saturation * (0.18 + input.waterNearby * 0.48 + input.valleyFactor * 0.34 + nightBoost * 0.3);
-    if (opportunity < 0.33 && input.precipitation < 0.22) return;
+    const lowStratusChance = saturation * (input.cloudCover ?? 0) * clamp((7 - input.windSpeed) / 7, 0, 1);
+    const rainMistChance = clamp(input.precipitation * 1.15 + Math.max(0, input.humidity - 0.78), 0, 1);
+    const opportunity = clamp(
+      saturation * (0.18 + input.waterNearby * 0.48 + input.valleyFactor * 0.34 + nightBoost * 0.3)
+        + rainMistChance * 0.42
+        + lowStratusChance * 0.32,
+      0,
+      1,
+    );
+    if (opportunity < 0.28 && input.precipitation < 0.16) return;
 
     const gridX = Math.floor(input.playerX / 360);
     const gridZ = Math.floor(input.playerZ / 360);
@@ -109,25 +125,35 @@ export class FogBankSystem {
         if (this.banks.has(key)) continue;
         const rng = makeRng((hashString(input.seed) ^ Math.imul(cx, 73856093) ^ Math.imul(cz, 19349663)) >>> 0);
         if (rng() > opportunity * 0.38) continue;
-        const kind: FogBankKind = input.temperature <= 0 ? "freezing" : input.waterNearby > 0.45 ? "river" : input.valleyFactor > 0.45 ? "valley" : nightBoost > 0.5 ? "radiation" : "advection";
+        const kind: FogBankKind =
+          input.precipitation > 0.16 ? "rain_mist" :
+          lowStratusChance > 0.48 ? "low_stratus" :
+          input.temperature <= 0 ? "freezing" :
+          input.waterNearby > 0.45 ? "river" :
+          input.valleyFactor > 0.45 ? "valley" :
+          nightBoost > 0.5 ? "radiation" :
+          "advection";
+        const broad = kind === "rain_mist" || kind === "low_stratus";
         this.banks.set(key, {
           id: key,
           x: cx * 360 + (rng() - 0.5) * 210,
           z: cz * 360 + (rng() - 0.5) * 210,
-          radius: 130 + rng() * 260 + opportunity * 180,
-          density: clamp(0.18 + opportunity * 0.62 + input.precipitation * 0.22, 0, 0.92),
+          radius: (broad ? 260 : 130) + rng() * (broad ? 420 : 260) + opportunity * (broad ? 260 : 180),
+          density: clamp(0.18 + opportunity * 0.62 + input.precipitation * 0.3 + lowStratusChance * 0.16, 0, 0.92),
           age: 0,
-          life: 90 + rng() * 220,
+          life: (broad ? 150 : 90) + rng() * (broad ? 300 : 220),
           kind,
         });
       }
     }
   }
 
-  private sample(x: number, z: number, humidity: number, precipitation: number): EnvironmentFogState {
+  private sample(input: FogBankUpdateInput): EnvironmentFogState {
     let bankDensity = 0;
     let nearest = Number.POSITIVE_INFINITY;
     let kind: FogBankKind | "none" = "none";
+    const x = input.playerX;
+    const z = input.playerZ;
     for (const bank of this.banks.values()) {
       const d = Math.hypot(bank.x - x, bank.z - z);
       nearest = Math.min(nearest, d);
@@ -138,15 +164,40 @@ export class FogBankSystem {
         kind = bank.kind;
       }
     }
-    const weatherMist = clamp((humidity - 0.82) * 1.35 + precipitation * 0.32, 0, 0.42);
-    const density = clamp(Math.max(bankDensity, weatherMist), 0, 1);
-    const visibilityMeters = Math.round(1800 - density * 1650);
+    const field = this.field.resolve({
+      humidity: input.humidity,
+      dewPoint: input.dewPoint,
+      temperature: input.temperature,
+      windSpeed: input.windSpeed,
+      windX: input.windX,
+      windZ: input.windZ,
+      dayFactor: input.dayFactor,
+      precipitation: input.precipitation,
+      cloudCover: input.cloudCover ?? 0,
+      waterNearby: input.waterNearby,
+      valleyFactor: input.valleyFactor,
+      playerY: input.playerY ?? 72,
+      surfaceY: input.surfaceY ?? 64,
+    }, bankDensity, kind);
+    this.lastField = field;
+    const density = field.density;
+    const visibilityMeters = Math.round(clamp(2200 * field.horizonVisibility - density * 520, 80, 2600));
     return {
       density,
       visibilityMeters,
       bankDensity,
       nearestBankDistance: Number.isFinite(nearest) ? nearest : -1,
       kind,
+      mode: field.mode,
+      baseY: field.baseY,
+      topY: field.topY,
+      terrainInfluence: field.terrainInfluence,
+      horizonVisibility: field.horizonVisibility,
+      stratusFogBlend: field.lowStratusBlend,
+      windX: field.windX,
+      windZ: field.windZ,
+      windSpeed: field.windSpeed,
+      legacyRendererActive: false,
     };
   }
 }

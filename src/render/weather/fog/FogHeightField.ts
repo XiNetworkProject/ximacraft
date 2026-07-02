@@ -31,20 +31,25 @@ export class FogHeightField {
     const sunBurn = environment ? environment.sunExposure * (0.18 + environment.dayFactor * 0.26) : 0.15;
     const freezingBoost = sample.kind === "freezing" ? 0.22 : 0;
     const waterBoost = sample.kind === "river" ? 0.26 : 0;
+    const rainBoost = sample.kind === "rain_mist" ? 0.42 : 0;
+    const stratusBoost = sample.kind === "low_stratus" ? 0.82 : 0;
     const baseOffset =
+      sample.kind === "low_stratus" ? 1.2 :
+      sample.kind === "rain_mist" ? 2.4 :
       sample.kind === "advection" ? 5.5 :
       sample.kind === "river" ? 1.5 :
       sample.kind === "freezing" ? 0.7 :
       0.35;
     const depth = Math.max(
       3.5,
-      5 + sample.density * 18 + valleyFactor * 20 + waterBoost * 14 + freezingBoost * 10 - sunBurn * 8,
+      5 + sample.density * 18 + valleyFactor * 20 + waterBoost * 14 + freezingBoost * 10 + rainBoost * 22 + stratusBoost * 58 - sunBurn * 8,
     );
     const reliefCeilingY = valleyFactor > 0.2
       ? Math.max(groundY + 5, Math.min(Math.min(...ring) - 2, groundY + 12 + ridgeLift * 0.68))
       : groundY + depth + 12;
     const baseY = Math.max(SEA_LEVEL + 0.35, groundY + baseOffset);
-    const topY = Math.max(baseY + 2.4, Math.min(baseY + depth, reliefCeilingY));
+    const lowCloudCeiling = sample.kind === "low_stratus" ? groundY + depth : reliefCeilingY;
+    const topY = Math.max(baseY + 2.4, Math.min(baseY + depth, lowCloudCeiling));
     return { groundY, baseY, topY, reliefCeilingY, valleyFactor };
   }
 }

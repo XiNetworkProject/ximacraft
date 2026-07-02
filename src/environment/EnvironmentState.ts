@@ -1,7 +1,8 @@
 import { SeasonId, SeasonState } from "../living/SeasonSystem";
 import { PrecipKind, WeatherSample, WeatherType } from "../weather/WeatherTypes";
 
-export type FogBankKind = "radiation" | "river" | "valley" | "advection" | "freezing";
+export type FogBankKind = "radiation" | "river" | "valley" | "advection" | "freezing" | "rain_mist" | "low_stratus";
+export type FogMode = "none" | "valley" | "rain_mist" | "low_stratus" | "haze";
 export type SurfaceMood = "dry" | "dew" | "wet" | "muddy" | "snow" | "frost" | "ice";
 
 export interface EnvironmentVisualState {
@@ -62,6 +63,26 @@ export interface EnvironmentFogState {
   bankDensity: number;
   nearestBankDistance: number;
   kind: FogBankKind | "none";
+  mode: FogMode;
+  baseY: number;
+  topY: number;
+  terrainInfluence: number;
+  horizonVisibility: number;
+  stratusFogBlend: number;
+  windX: number;
+  windZ: number;
+  windSpeed: number;
+  legacyRendererActive: boolean;
+}
+
+export interface AtmosphericHazeState {
+  density: number;
+  humidityHaze: number;
+  rainMist: number;
+  lowStratusBlend: number;
+  horizonVisibility: number;
+  sunTransmittance: number;
+  color: number;
 }
 
 export interface EnvironmentFaunaState {
@@ -120,5 +141,6 @@ export interface EnvironmentState {
   surface: EnvironmentSurfaceState;
   thermal: ThermalComfortState;
   fog: EnvironmentFogState;
+  atmosphericHaze: AtmosphericHazeState;
   visual: EnvironmentVisualState;
 }

@@ -2,6 +2,8 @@ import type { WeatherVisualLabResult } from "./WeatherVisualLab";
 import type { StratiformCloudDebugState } from "../render/weather/StratiformCloudRenderer";
 import type { CumulusFieldRenderDebug } from "../render/weather/CumulusFieldRenderer";
 import type { DistantPrecipitationRenderDebug } from "../render/weather/DistantPrecipitationRenderer";
+import type { FogRendererDebugState } from "../render/weather/fog/FogVolumeRenderer";
+import type { AtmosphericHazeState } from "../environment/EnvironmentState";
 
 export type WeatherVisualMode = "new" | "legacy";
 
@@ -24,6 +26,7 @@ export interface WeatherVisualTargets {
   cumulusField?: CumulusFieldTarget;
   cloudSprites: ToggleableRenderer;
   distantPrecipitation?: ToggleableRenderer;
+  fogRenderer?: ToggleableRenderer & { debug(): FogRendererDebugState };
 }
 
 export interface CumulusFieldMetrics {
@@ -94,6 +97,8 @@ export interface WeatherVisualLabMetrics {
   stratiformClouds?: StratiformCloudDebugState;
   cumulusField?: CumulusFieldMetrics;
   distantPrecipitation?: DistantPrecipitationRenderDebug;
+  fogRenderer?: FogRendererDebugState;
+  atmosphericHaze?: AtmosphericHazeState;
 }
 
 export class WeatherVisualDirector {
@@ -138,9 +143,10 @@ export class WeatherVisualDirector {
       },
       {
         phenomenon: "Brouillard / brume",
-        authority: "FogBankRenderer + SkySystem fog",
+        authority: "FogVolumeRenderer + SkySystem atmospheric haze",
         worldAnchored: true,
-        active: () => true,
+        active: () => this.targets.fogRenderer?.isEnabled() ?? true,
+        note: "Phase 2D-1: FogBankSystem/FogField unique, banques world-space + horizon haze",
       },
       {
         phenomenon: "Neige au sol / surface",
@@ -186,6 +192,7 @@ export class WeatherVisualDirector {
 
   setLabScenario(result: WeatherVisualLabResult): void {
     this.labResult = result;
+    this.metrics = null;
     this.panelOpen = true;
     this.renderPanel();
   }
@@ -207,6 +214,7 @@ export class WeatherVisualDirector {
     this.targets.cumulusField?.setEnabled(!legacy);
     this.targets.cloudSprites.setEnabled(legacy);
     this.targets.distantPrecipitation?.setEnabled(!legacy);
+    this.targets.fogRenderer?.setEnabled(!legacy);
   }
 
   layersReport(): string[] {
@@ -243,6 +251,9 @@ export class WeatherVisualDirector {
     if (metrics?.rainCurtains?.enabled || metrics?.rainCurtains?.visible) {
       warnings.push("ATTENTION: RainCurtainRenderer legacy actif alors qu'il doit rester OFF.");
     }
+    if (metrics?.fogRenderer?.legacyRendererActive) {
+      warnings.push("ATTENTION: renderer fog legacy actif en meme temps que FogVolumeRenderer.");
+    }
 
     rows.push(`<div class="weather-visual-lab-title">Weather Visual Lab</div>`);
     rows.push(`<div class="weather-visual-lab-subtitle">${escapeHtml(result?.label ?? "Aucun scenario actif")}</div>`);
@@ -255,6 +266,22 @@ export class WeatherVisualDirector {
     rows.push(this.row("Precip joueur", metrics ? `${metrics.sample.precipitation.toFixed(2)} / ${metrics.sample.weatherType}` : "-"));
     rows.push(this.row("Nuages", metrics ? `${Math.round(metrics.sample.cloudCover * 100)}%` : "-"));
     rows.push(this.row("Stratiforme", this.formatStratiform(metrics?.stratiformClouds)));
+    rows.push(this.row("Fog authority", metrics?.fogRenderer?.authority ?? "FogVolumeRenderer"));
+    if (metrics?.fogRenderer) {
+      rows.push(this.row("Fog mode", metrics.fogRenderer.mode));
+      rows.push(this.row("Density at player", metrics.fogRenderer.densityAtPlayer.toFixed(2)));
+      rows.push(this.row("Fog base/top", `${metrics.fogRenderer.baseY.toFixed(1)} / ${metrics.fogRenderer.topY.toFixed(1)}`));
+      rows.push(this.row("Nearest fog bank", metrics.fogRenderer.nearestBankDistance < 0 ? "-" : `${Math.round(metrics.fogRenderer.nearestBankDistance)}m`));
+      rows.push(this.row("Fog wind", `${this.directionLabel(metrics.fogRenderer.windX, metrics.fogRenderer.windZ)} ${metrics.fogRenderer.windSpeed.toFixed(1)}b/s`));
+      rows.push(this.row("Terrain influence", metrics.fogRenderer.terrainInfluence.toFixed(2)));
+      rows.push(this.row("Horizon visibility", `${Math.round(metrics.fogRenderer.horizonVisibility * 100)}%`));
+      rows.push(this.row("Stratus-fog blend", metrics.fogRenderer.stratusFogBlend.toFixed(2)));
+      rows.push(this.row("Fog visible banks/layers", `${metrics.fogRenderer.visibleBanks}/${metrics.fogRenderer.visibleLayers}`));
+      rows.push(this.row("Legacy fog renderers", metrics.fogRenderer.legacyRendererActive ? "active" : "OFF"));
+    }
+    if (metrics?.atmosphericHaze) {
+      rows.push(this.row("Atmospheric haze", `${metrics.atmosphericHaze.density.toFixed(2)} / sun ${metrics.atmosphericHaze.sunTransmittance.toFixed(2)}`));
+    }
     rows.push(this.row("Distant precipitation", this.formatDistantPrecipitation(metrics?.distantPrecipitation)));
     if (metrics?.distantPrecipitation) {
       rows.push(this.row("Precipitation mode", metrics.distantPrecipitation.mode));

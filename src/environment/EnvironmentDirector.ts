@@ -2,6 +2,8 @@ import { WORLD_DAY_TICKS } from "../utils/Constants";
 import { WeatherEngine } from "../weather/WeatherEngine";
 import { WeatherSample } from "../weather/WeatherTypes";
 import type { PrecipKind } from "../weather/WeatherTypes";
+import { SkyState } from "../weather/scene/WeatherScene";
+import type { WeatherSceneState } from "../weather/scene/WeatherScene";
 import { SurfaceWeatherState } from "../weather/ground/SurfaceWeatherState";
 import { SeasonSystem } from "../living/SeasonSystem";
 import { World } from "../world/World";
@@ -18,6 +20,7 @@ export interface EnvironmentDirectorUpdateInput {
   delta: number;
   world: World;
   surfaceState: SurfaceWeatherState;
+  weatherScene?: WeatherSceneState;
   ticks: number;
   player: { x: number; y: number; z: number };
   dayFactor: number;
@@ -68,20 +71,28 @@ export class EnvironmentDirector {
     });
     const waterNearby = this.waterPresence(input.world, input.player.x, input.player.z);
     const valleyFactor = this.valleyFactor(input.world, input.player.x, input.player.z);
+    const sceneFog = this.sceneFogInfluence(input.weatherScene);
+    const fogHumidity = Math.max(sample.humidity, sceneFog.humidity);
+    const fogCloudCover = Math.max(sample.cloudCover, sceneFog.cloudCover);
+    const fogPrecipitation = Math.max(sample.precipitation, sceneFog.precipitation);
+    const fogDewPoint = dewPointC(temperature, fogHumidity);
     const fog = this.fogBanks.update(input.delta, {
       seed: this.seedProvider(),
       playerX: input.player.x,
       playerZ: input.player.z,
-      humidity: sample.humidity,
-      dewPoint,
+      humidity: fogHumidity,
+      dewPoint: fogDewPoint,
       temperature,
       windX: sample.windX,
       windZ: sample.windZ,
       windSpeed: sample.windSpeed,
       dayFactor: input.dayFactor,
-      precipitation: sample.precipitation,
+      precipitation: fogPrecipitation,
+      cloudCover: fogCloudCover,
       waterNearby,
       valleyFactor,
+      playerY: input.player.y,
+      surfaceY: input.world.getSurfaceHeight(input.player.x, input.player.z),
     });
     const visual = this.phenology.resolve(season, surface, temperature, sample.humidity, input.dayFactor);
     const state: EnvironmentState = {
@@ -112,6 +123,7 @@ export class EnvironmentDirector {
       surface,
       thermal,
       fog,
+      atmosphericHaze: this.atmosphericHaze({ ...sample, humidity: fogHumidity, cloudCover: fogCloudCover, precipitation: fogPrecipitation }, fog),
       visual,
     };
     this.current = state;
@@ -195,7 +207,7 @@ export class EnvironmentDirector {
       `Environment season=${s.season.season} biome=${s.biomeId}`,
       `day=${s.dayOfSeason} hour=${s.hour.toFixed(1)} temp=${s.temperature.toFixed(1)}C feels=${s.thermal.feelsLike.toFixed(1)}C dew=${s.dewPoint.toFixed(1)}C comfort=${s.thermal.label}`,
       `surface=${s.surface.mood} wet=${s.surface.wetness.toFixed(2)} snow=${s.surface.snowDepth.toFixed(2)} frost=${s.surface.frost.toFixed(2)} ice=${s.surface.ice.toFixed(2)}`,
-      `fog=${s.fog.density.toFixed(2)} ${s.fog.kind} visibility=${s.fog.visibilityMeters}m gust=${s.gustSpeed.toFixed(1)} river=${s.riverLevel.toFixed(2)} fauna=${s.fauna.label} haze=${s.airQuality.haze.toFixed(2)}`,
+      `fog=${s.fog.density.toFixed(2)} ${s.fog.mode}/${s.fog.kind} base=${s.fog.baseY.toFixed(1)} top=${s.fog.topY.toFixed(1)} visibility=${s.fog.visibilityMeters}m gust=${s.gustSpeed.toFixed(1)} river=${s.riverLevel.toFixed(2)} fauna=${s.fauna.label} haze=${s.airQuality.haze.toFixed(2)}`,
     ].join(" | ");
   }
 
@@ -205,6 +217,10 @@ export class EnvironmentDirector {
 
   fogRenderSamples(observerX: number, observerZ: number, maxDistance?: number): FogBankRenderSample[] {
     return this.fogBanks.renderSamples(observerX, observerZ, maxDistance);
+  }
+
+  clearFog(): void {
+    this.fogBanks.clear();
   }
 
   sampleAt(world: World, x: number, y: number, z: number, ticks = 0, dayFactor = 1): EnvironmentState {
@@ -225,9 +241,26 @@ export class EnvironmentDirector {
       surfaceState: new SurfaceWeatherState((wx, wz) => world.getSurfaceHeight(wx, wz)),
     });
     const sunExposure = clamp(dayFactor * (1 - sample.cloudCover * 0.82), 0, 1);
-    const fog = this.fogBanks.renderSamples(x, z, 900).length > 0
-      ? { density: Math.min(0.82, sample.humidity * 0.45), visibilityMeters: Math.round(1800 - sample.humidity * 700), bankDensity: sample.humidity * 0.45, nearestBankDistance: 0, kind: "advection" as const }
-      : { density: clamp((sample.humidity - 0.82) * 1.35 + sample.precipitation * 0.32, 0, 0.42), visibilityMeters: Math.round(1800 - clamp((sample.humidity - 0.82) * 1.35 + sample.precipitation * 0.32, 0, 0.42) * 1650), bankDensity: 0, nearestBankDistance: -1, kind: "none" as const };
+    const sampleFogDensity = this.fogBanks.renderSamples(x, z, 900).length > 0
+      ? Math.min(0.82, sample.humidity * 0.45)
+      : clamp((sample.humidity - 0.82) * 1.35 + sample.precipitation * 0.32, 0, 0.42);
+    const fog = {
+      density: sampleFogDensity,
+      visibilityMeters: Math.round(1800 - sampleFogDensity * 1650),
+      bankDensity: sampleFogDensity,
+      nearestBankDistance: sampleFogDensity > 0.01 ? 0 : -1,
+      kind: sampleFogDensity > 0.01 ? "advection" as const : "none" as const,
+      mode: sampleFogDensity > 0.12 ? "haze" as const : "none" as const,
+      baseY: Math.max(0, y - 1),
+      topY: y + 20 + sampleFogDensity * 40,
+      terrainInfluence: 0,
+      horizonVisibility: clamp(1 - sampleFogDensity * 0.82, 0.08, 1),
+      stratusFogBlend: 0,
+      windX: sample.windX,
+      windZ: sample.windZ,
+      windSpeed: sample.windSpeed,
+      legacyRendererActive: false,
+    };
     return {
       season,
       dayOfSeason: Math.floor(season.progress * 24),
@@ -256,8 +289,46 @@ export class EnvironmentDirector {
       surface,
       thermal: this.thermal.resolve({ temperature, humidity: sample.humidity, windSpeed: sample.windSpeed, sunExposure, precipitation: sample.precipitation }),
       fog,
+      atmosphericHaze: this.atmosphericHaze(sample, fog),
       visual: this.phenology.resolve(season, surface, temperature, sample.humidity, dayFactor),
     };
+  }
+
+  private atmosphericHaze(sample: WeatherSample, fog: EnvironmentState["fog"]): EnvironmentState["atmosphericHaze"] {
+    const humidityHaze = clamp((sample.humidity - 0.56) * 0.5 + sample.cloudCover * 0.08, 0, 0.52);
+    const rainMist = fog.mode === "rain_mist" ? clamp(sample.precipitation * 0.86 + humidityHaze * 0.42, 0, 1) : sample.precipitation * 0.22;
+    return {
+      density: clamp(humidityHaze + rainMist * 0.28 + fog.stratusFogBlend * 0.18 + fog.density * 0.18, 0, 1),
+      humidityHaze,
+      rainMist,
+      lowStratusBlend: fog.stratusFogBlend,
+      horizonVisibility: fog.horizonVisibility,
+      sunTransmittance: clamp(1 - fog.density * 0.42 - fog.stratusFogBlend * 0.22 - rainMist * 0.18, 0.16, 1),
+      color: fog.mode === "rain_mist" ? 0x8fa0ac : fog.mode === "low_stratus" ? 0xaeb8bf : fog.mode === "valley" ? 0xc9d2d8 : 0xb7cce0,
+    };
+  }
+
+  private sceneFogInfluence(scene: WeatherSceneState | undefined): { humidity: number; cloudCover: number; precipitation: number } {
+    if (!scene) return { humidity: 0, cloudCover: 0, precipitation: 0 };
+    const precip = scene.precipitation.reachesGround
+      ? clamp(scene.precipitation.intensity * 0.72, 0, 0.85)
+      : 0;
+    switch (scene.skyState) {
+      case SkyState.DENSE_FOG:
+        return { humidity: 0.99, cloudCover: 0.42, precipitation: 0 };
+      case SkyState.PATCHY_FOG:
+        return { humidity: 0.95, cloudCover: 0.32, precipitation: 0 };
+      case SkyState.LOW_OVERCAST:
+        return { humidity: 0.94, cloudCover: 0.92, precipitation: Math.min(precip, 0.06) };
+      case SkyState.NIMBOSTRATUS_RAIN:
+        return { humidity: 0.92, cloudCover: 0.98, precipitation: Math.max(precip, 0.22) };
+      case SkyState.WHITEOUT:
+        return { humidity: 0.96, cloudCover: 0.92, precipitation: Math.max(precip, 0.18) };
+      default:
+        return precip > 0.08
+          ? { humidity: 0.84, cloudCover: Math.max(0.72, scene.cloudLayers[0]?.coverage ?? 0), precipitation: precip }
+          : { humidity: 0, cloudCover: 0, precipitation: 0 };
+    }
   }
 
   private applyForces(sample: WeatherSample): WeatherSample {

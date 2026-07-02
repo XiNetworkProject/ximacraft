@@ -23,6 +23,9 @@ export type WeatherVisualScenarioName =
   | "rain_front_approaching"
   | "rain_front_local"
   | "valley_fog"
+  | "valley_fog_dawn"
+  | "rain_mist"
+  | "low_stratus"
   | "snow_squall"
   | "thunderstorm";
 
@@ -41,6 +44,9 @@ export const WEATHER_VISUAL_SCENARIOS: readonly WeatherVisualScenarioName[] = [
   "rain_front_approaching",
   "rain_front_local",
   "valley_fog",
+  "valley_fog_dawn",
+  "rain_mist",
+  "low_stratus",
   "snow_squall",
   "thunderstorm",
 ];
@@ -66,6 +72,7 @@ export interface WeatherVisualLabTargets {
   lightning?: { reset(): void };
   cumulusField?: { reset(): void; setRegime(regime: CumulusRegimeName | null): void };
   rainCurtains?: { setEnabled(enabled: boolean): void; clear(): void };
+  environmentDirector?: { clearFog(): void };
   setTime?: (name: string) => void;
   setLegacyWeather?: (type: string, duration?: number, intensity?: number) => void;
 }
@@ -101,6 +108,7 @@ export function resetWeatherVisualLabState(targets: WeatherVisualLabTargets): vo
   targets.lightning?.reset();
   targets.rainCurtains?.setEnabled(false);
   targets.rainCurtains?.clear();
+  targets.environmentDirector?.clearFog();
   targets.setLegacyWeather?.("clear", 900, 0);
   targets.setTime?.("day");
   paintWeatherLabCells(targets.engine, {
@@ -230,6 +238,7 @@ export function startWeatherVisualLabScenario(
     case "valley_fog":
       targets.setTime?.("sunrise");
       targets.scenarios.hold(SynopticRegime.FOG_PRONE_NIGHT, 900);
+      targets.scenarios.forceSky(SkyState.PATCHY_FOG, 900, "none");
       targets.engine.setWind(0.9, 0.25);
       paintWeatherLabCells(targets.engine, {
         cloudCover: 0.22,
@@ -246,7 +255,59 @@ export function startWeatherVisualLabScenario(
         label: "Brouillard de vallee",
         forcedTime: "sunrise",
         expected: "Air tres humide, vent faible, brouillard monde via FogBankRenderer.",
-        renderers: ["FogBankRenderer", "SkySystem"],
+        renderers: ["FogField", "FogVolumeRenderer", "SkySystem atmospheric haze"],
+        warnings: [RAIN_CURTAINS_WARNING],
+      };
+
+    case "valley_fog_dawn":
+      targets.setTime?.("sunrise");
+      targets.scenarios.hold(SynopticRegime.FOG_PRONE_NIGHT, 900);
+      targets.scenarios.forceSky(SkyState.DENSE_FOG, 900, "none");
+      targets.engine.setWind(0.35, 0.15);
+      paintWeatherLabCells(targets.engine, {
+        cloudCover: 0.34,
+        humidity: 0.98,
+        instability: 0.005,
+        temperature: 4.5,
+        pressure: 1019,
+        windX: 0.35,
+        windZ: 0.15,
+        radiusCells: 10,
+      });
+      return {
+        scenario,
+        label: "Brouillard de vallee a l'aube",
+        forcedTime: "sunrise",
+        expected: "Brouillard plus dense dans les creux, lumiere douce, horizon progressivement masque.",
+        renderers: ["FogField valley", "FogVolumeRenderer", "SkySystem atmospheric haze"],
+        warnings: [RAIN_CURTAINS_WARNING],
+      };
+
+    case "rain_mist":
+      return activateRainMistScenario(scenario, targets, origin);
+
+    case "low_stratus":
+      targets.setTime?.("sunrise");
+      targets.scenarios.hold(SynopticRegime.FOG_PRONE_NIGHT, 900);
+      targets.scenarios.forceSky(SkyState.LOW_OVERCAST, 900, "none");
+      targets.scenarios.forcePrecipitation(PrecipitationKind.NONE, 0, 900, "none", false);
+      targets.engine.setWind(0.8, 0.2);
+      paintWeatherLabCells(targets.engine, {
+        cloudCover: 0.92,
+        humidity: 0.97,
+        instability: 0.02,
+        temperature: 7,
+        pressure: 1014,
+        windX: 0.8,
+        windZ: 0.2,
+        radiusCells: 10,
+      });
+      return {
+        scenario,
+        label: "Stratus bas raccorde au sol",
+        forcedTime: "sunrise",
+        expected: "Stratus tres bas + fog au sol raccordes, sans pluie obligatoire.",
+        renderers: ["StratiformCloudRenderer", "FogField low_stratus", "FogVolumeRenderer", "SkySystem atmospheric haze"],
         warnings: [RAIN_CURTAINS_WARNING],
       };
 
@@ -312,6 +373,43 @@ export function startWeatherVisualLabScenario(
       };
     }
   }
+}
+
+function activateRainMistScenario(
+  scenario: WeatherVisualScenarioName,
+  targets: WeatherVisualLabTargets,
+  origin: { x: number; z: number },
+): WeatherVisualLabResult {
+  targets.setTime?.("noon");
+  targets.scenarios.hold(SynopticRegime.OCCLUDED_FRONT, 900);
+  targets.scenarios.forceSky(SkyState.NIMBOSTRATUS_RAIN, 900, "none");
+  targets.engine.setWind(0.6, 5.6);
+  paintWeatherLabCells(targets.engine, {
+    cloudCover: 0.92,
+    humidity: 0.9,
+    instability: 0.05,
+    temperature: 11,
+    pressure: 1006,
+    windX: 0.6,
+    windZ: 5.6,
+    radiusCells: 10,
+    precipitation: 0.18,
+  });
+  const band = targets.engine.spawnRainBand(3200, origin.x, origin.z - 1150);
+  band.intensity = 0.72;
+  band.maxAge = 760;
+  band.speed = 7;
+  band.cloudBaseY = 118;
+  band.producesLightning = false;
+  band.setDirection({ x: 0.04, z: 1 });
+  return {
+    scenario,
+    label: "Brume de pluie sous front",
+    forcedTime: "noon",
+    expected: "Rain band reelle, pluie locale/proche et brume humide renforcee sous le front, sans eclair.",
+    renderers: ["WeatherEngine rain_band", "DistantPrecipitationRenderer", "PrecipitationRenderer local", "FogField rain_mist", "FogVolumeRenderer"],
+    warnings: [RAIN_CURTAINS_WARNING],
+  };
 }
 
 function activateRainFrontScenario(

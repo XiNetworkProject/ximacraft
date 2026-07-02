@@ -11,6 +11,7 @@ import { WeatherSample } from "../weather/WeatherTypes";
 import { deriveCloudLayerState } from "../weather/sky/CloudLayerState";
 import { CloudLayerType, WeatherSceneState } from "../weather/scene/WeatherScene";
 import { VisibilityController } from "../weather/visibility/VisibilityController";
+import type { AtmosphericHazeState } from "../environment/EnvironmentState";
 
 export interface SkyStratiformAtmosphere {
   kind: "stratus" | "stratocumulus" | "altostratus" | "nimbostratus";
@@ -37,6 +38,7 @@ export class SkySystem {
   private readonly visibilityController = new VisibilityController();
   private cloudShadeTime = 0;
   private stratiformAtmosphere: SkyStratiformAtmosphere | null = null;
+  private worldFogAtmosphere: AtmosphericHazeState | null = null;
 
   constructor(private readonly renderer: Renderer) {
     this.skyDome = this.createSkyDome();
@@ -49,6 +51,10 @@ export class SkySystem {
 
   setStratiformAtmosphere(state: SkyStratiformAtmosphere | null): void {
     this.stratiformAtmosphere = state;
+  }
+
+  setWorldFogAtmosphere(state: AtmosphericHazeState | null): void {
+    this.worldFogAtmosphere = state;
   }
 
   updateWithWorld(delta: number, time: Time, weather: WeatherSystem, player: Player, world: World): number {
@@ -96,6 +102,7 @@ export class SkySystem {
       lowCover,
     );
     const stratiformVisual = this.stratiformAtmosphere;
+    const fogAtmosphere = this.worldFogAtmosphere;
     const stratiformInfluence = stratiformVisual
       ? clamp(
           stratiformVisual.coverage
@@ -177,11 +184,23 @@ export class SkySystem {
       horizon.lerp(hazeColor, sceneState.visibility.haze * 0.58);
       top.lerp(hazeColor, sceneState.visibility.haze * 0.24);
     }
+    if (fogAtmosphere && fogAtmosphere.density > 0.015) {
+      const fogColor = new THREE.Color(fogAtmosphere.color);
+      const horizonFog = clamp((1 - fogAtmosphere.horizonVisibility) * 0.72 + fogAtmosphere.rainMist * 0.16, 0, 0.78);
+      const topFog = clamp(fogAtmosphere.density * 0.16 + fogAtmosphere.lowStratusBlend * 0.14, 0, 0.34);
+      horizon.lerp(fogColor, horizonFog);
+      top.lerp(fogColor, topFog);
+    }
     const material = this.skyDome.material as THREE.ShaderMaterial;
     material.uniforms.topColor.value.copy(top);
     material.uniforms.horizonColor.value.copy(horizon);
-    const fogNear = resolvedVisibility?.fogNear ?? lerp(220, 18, visibilityLoss);
-    const fogFar = resolvedVisibility?.fogFar ?? lerp(1800, frozenPrecipitation ? 82 : 170, visibilityLoss);
+    let fogNear = resolvedVisibility?.fogNear ?? lerp(220, 18, visibilityLoss);
+    let fogFar = resolvedVisibility?.fogFar ?? lerp(1800, frozenPrecipitation ? 82 : 170, visibilityLoss);
+    if (fogAtmosphere && fogAtmosphere.density > 0.015) {
+      const horizonLoss = 1 - fogAtmosphere.horizonVisibility;
+      fogNear = Math.min(fogNear, lerp(260, 44, clamp(horizonLoss * 0.86 + fogAtmosphere.rainMist * 0.12, 0, 1)));
+      fogFar = Math.min(fogFar, lerp(2600, 260, clamp(horizonLoss * 0.9 + fogAtmosphere.rainMist * 0.16 + fogAtmosphere.lowStratusBlend * 0.12, 0, 1)));
+    }
     this.renderer.scene.fog = new THREE.Fog(horizon, fogNear, fogFar);
     this.renderer.scene.background = top;
 
@@ -210,7 +229,8 @@ export class SkySystem {
     // lunaire bleutée (jamais totalement noire). Les nuages adoucissent le soleil.
     this.renderer.ambientLight.intensity = lerp(0.3, 1.02, dayFactor) * (1 - visuals.stormDarkening * 0.28) + dayFactor * effectiveCover * 0.08 + visuals.lightningFlash * 0.34;
     this.renderer.hemisphereLight.intensity = lerp(0.5, 1.78, dayFactor) * (1 - visuals.stormDarkening * 0.34) * (1 - sunOcclusion * 0.08);
-    this.renderer.sunLight.intensity = lerp(0.04, 4.15, dayFactor) * (1 - visuals.stormDarkening * 0.58) * (1 - effectiveCover * 0.16) * sunVisibility + visuals.lightningFlash * 0.72;
+    const fogSunTransmittance = fogAtmosphere?.sunTransmittance ?? 1;
+    this.renderer.sunLight.intensity = lerp(0.04, 4.15, dayFactor) * (1 - visuals.stormDarkening * 0.58) * (1 - effectiveCover * 0.16) * sunVisibility * fogSunTransmittance + visuals.lightningFlash * 0.72;
     this.renderer.moonLight.intensity = lerp(0.42, 0.02, dayFactor) * (1 - effectiveCover * 0.45);
 
     // La caméra d'ombre suit le joueur (sinon les ombres restent figées près de
